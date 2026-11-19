@@ -1,0 +1,230 @@
+// B1 离线冒烟：不需要 Cloudflare 账号 / 不需要真实 .xmind 样本。
+// 验证「两单文件 + 含子目录的资源树 → 依赖断言 → R2 key 格局 → 两代 xmind 解析出图」整条数据链路。
+// 真机才能验的部分（Access / 预签名 PUT / R2 CORS / 浏览器渲染 / 大包直传）在末尾明确列出。
+import assert from 'node:assert/strict';
+import { File } from 'node:buffer';
+import { zipSync, unzipSync, strFromU8 } from 'fflate';
+import { importXMindFile, convertXmindToMindElixir } from '@mind-elixir/import-xmind';
+import { inspectXmind } from '../shared/xmind.js';
+import { validateMeta, slugify } from '../shared/contract.js';
+import {
+  stripTopFolder,
+  buildUploadPlan,
+  findDuplicateNames,
+  isUnsafeRelativePath,
+} from '../shared/paths.js';
+import { extractReferences, buildAvailableSet, findMissingDeps } from '../shared/deps.js';
+
+const enc = new TextEncoder();
+const S = (s) => enc.encode(s);
+const results = [];
+const check = (name, fn) => {
+  fn();
+  results.push(name);
+  console.log(`  ✓ ${name}`);
+};
+
+console.log('=== B1 离线冒烟（沙盒已验）===\n');
+
+// ---------- 1. 元数据与枚举 ----------
+const meta = {
+  title: '封冻恶疾',
+  slug: 'frozen-malice',
+  system: 'dnd',
+  kind: 'module',
+  status: 'published',
+  summary: '一次寒夜里的调查',
+  cover: 'assets/cover.png',
+};
+check('slug 由英文小写短横线生成；纯中文标题要求人工填 slug', () => {
+  assert.equal(slugify('Death Mines: The Lost Vault!'), 'death-mines-the-lost-vault');
+  assert.equal(slugify('封冻恶疾'), '');
+  assert.deepEqual(validateMeta(meta), []);
+});
+check('非法 system / kind / status 被拒', () => {
+  assert.equal(validateMeta({ ...meta, system: 'dnd5e', kind: 'series', status: 'live' }).length, 3);
+});
+
+// ---------- 2. 三区输入 → R2 key 格局 ----------
+const consoleFile = '02_DM主控台.html';
+const mindmapFile = '剧情导图.xmind';
+// 模拟用户拖入顶层文件夹「资源包」后的 webkitRelativePath，剥顶层后挂到 slug 根
+const selected = [
+  '资源包/原文.html',
+  '资源包/source/第二章.html',
+  '资源包/assets/maps/地图 01.png',
+  '资源包/assets/maps/深层/隐藏地图#2.png',
+  '资源包/assets/cover.png',
+];
+const tree = selected.map((p) => stripTopFolder(p, '资源包'));
+
+check('拖拽树剥掉顶层文件夹名、≥2 层子目录完整保留', () => {
+  assert.deepEqual(tree, [
+    '原文.html',
+    'source/第二章.html',
+    'assets/maps/地图 01.png',
+    'assets/maps/深层/隐藏地图#2.png',
+    'assets/cover.png',
+  ]);
+});
+check('中文 / 特殊字符路径合法；.. 与根绝对路径被判不安全', () => {
+  assert.equal(isUnsafeRelativePath('assets/maps/深层/隐藏地图#2.png'), false);
+  assert.equal(isUnsafeRelativePath('../a.png'), true);
+  assert.equal(isUnsafeRelativePath('/assets/a.png'), true);
+});
+
+const plan = buildUploadPlan(meta.slug, consoleFile, mindmapFile, tree);
+check('两单文件平铺条目根；资源树按原结构挂在根下，顶层名不挂成额外一层', () => {
+  assert.deepEqual(plan.map((p) => p.key), [
+    'modules/frozen-malice/02_DM主控台.html',
+    'modules/frozen-malice/剧情导图.xmind',
+    'modules/frozen-malice/原文.html',
+    'modules/frozen-malice/source/第二章.html',
+    'modules/frozen-malice/assets/maps/地图 01.png',
+    'modules/frozen-malice/assets/maps/深层/隐藏地图#2.png',
+    'modules/frozen-malice/assets/cover.png',
+  ]);
+  assert.ok(!plan.some((p) => p.key.includes('/资源包/')));
+});
+check('无重名；两单文件同名或单文件命中拖拽树 → 拒', () => {
+  assert.deepEqual(findDuplicateNames(consoleFile, mindmapFile, tree), []);
+  assert.ok(findDuplicateNames('同一个.html', '同一个.html', tree).length > 0);
+  assert.ok(findDuplicateNames('02_DM主控台.html', mindmapFile, ['02_DM主控台.html']).length > 0);
+});
+
+// ---------- 3. 按主控台实际引用逐项断言（不预设必备文件名清单） ----------
+const consoleHtml = `
+<!doctype html><html><body>
+  <a href="原文.html">原文（单文件）</a>
+  <a href="./source/第二章.html">多文件原文</a>
+  <img src="assets/maps/地图 01.png">
+  <iframe src="assets/maps/深层/隐藏地图%232.png#top"></iframe>
+  <script src="assets/app.js"></script>
+  <img src="https://media.dndbeyond.com/avatars/1.png">
+  <a href="#chapter1">页内锚点</a>
+</body></html>`;
+const refs = extractReferences(consoleHtml);
+check('主控台本地引用归一化；绝对外链 / 锚点不纳入存在性断言', () => {
+  assert.deepEqual(refs.local.sort(), [
+    'assets/app.js',
+    'assets/maps/地图 01.png',
+    'assets/maps/深层/隐藏地图#2.png',
+    'source/第二章.html',
+    '原文.html',
+  ].sort());
+  assert.equal(refs.external.length, 1);
+  assert.equal(refs.rootRelative.length, 0);
+});
+
+// 补上主控台引用到的 assets/app.js，并留一个未被引用文件（验证不拦）
+const fullTree = [...tree, 'assets/app.js', '未被引用的废图.png'];
+const available = buildAvailableSet(consoleFile, mindmapFile, fullTree);
+check('原文单文件 / 多文件两种形态都能过；树内多余未被引用文件不拦', () => {
+  assert.deepEqual(findMissingDeps(refs, available), []);
+});
+check('先红后绿：删掉一个被引用文件，断言真的会红', () => {
+  const broken = buildAvailableSet(
+    consoleFile,
+    mindmapFile,
+    fullTree.filter((p) => p !== 'assets/maps/地图 01.png'),
+  );
+  assert.deepEqual(findMissingDeps(refs, broken), ['assets/maps/地图 01.png']);
+});
+
+// ---------- 4. 两代 .xmind 格式（合成样本，不依赖真实文件） ----------
+const MODERN_JSON = JSON.stringify([
+  {
+    id: 'sheet-1',
+    title: '主画布',
+    rootTopic: {
+      id: 'root',
+      title: '封冻恶疾',
+      children: { attached: [{ id: 'a', title: '第一幕 · 雪夜' }, { id: 'b', title: '第二幕 · 地窖' }] },
+    },
+  },
+  {
+    id: 'sheet-2',
+    title: 'NPC 关系',
+    rootTopic: { id: 'r2', title: '人物', children: { attached: [{ id: 'c', title: '镇长' }] } },
+  },
+]);
+const UPGRADE_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<xmap-content><sheet id="s"><topic id="t"><title>Please update XMind to open this file</title></topic></sheet></xmap-content>`;
+const XMIND8_XML = `<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<xmap-content xmlns="urn:xmind:xmap:xmlns:content:2.0" version="2.0">
+  <sheet id="s1"><title>Sheet 1</title>
+    <topic id="root"><title>冰封恶疾</title>
+      <children><topics type="attached">
+        <topic id="n1"><title>第一幕</title></topic>
+        <topic id="n2"><title>第二幕</title></topic>
+      </topics></children>
+    </topic>
+  </sheet>
+</xmap-content>`;
+
+const modernZip = zipSync({
+  'content.json': S(MODERN_JSON),
+  // 现代文件里也带一个只提示升级的占位 content.xml —— 必须忽略它
+  'content.xml': S(UPGRADE_XML),
+  'metadata.json': S('{}'),
+});
+const legacyZip = zipSync({ 'content.xml': S(XMIND8_XML), 'META-INF/manifest.xml': S('<manifest/>') });
+
+// 库内部会打印 ZIP 对象，冒烟输出保持干净
+const originalLog = console.log;
+async function parse(file) {
+  console.log = () => {};
+  try {
+    return await importXMindFile(file);
+  } finally {
+    console.log = originalLog;
+  }
+}
+
+check('现代 XMind：有 content.json 优先，占位 content.xml 不导致空图', () => {
+  const entries = unzipSync(modernZip);
+  assert.equal(inspectXmind(entries).format, 'json');
+  assert.equal(strFromU8(entries['content.json']), MODERN_JSON);
+});
+const modernSheets = await parse(new File([modernZip], '剧情导图.xmind'));
+check('现代 XMind 解析出 2 个 sheet，节点标题可读、可转 mind-elixir 数据', () => {
+  assert.equal(modernSheets.length, 2);
+  assert.equal(modernSheets[0].rootTopic.title, '封冻恶疾');
+  const data = convertXmindToMindElixir(modernSheets[0]);
+  assert.equal(data.nodeData.topic, '封冻恶疾');
+  assert.equal(data.nodeData.children.length, 2);
+  assert.equal(convertXmindToMindElixir(modernSheets[1]).nodeData.topic, '人物');
+});
+
+check('XMind 8：无 content.json 时回退 content.xml，且判为旧格式', () => {
+  assert.equal(inspectXmind(unzipSync(legacyZip)).format, 'xml');
+});
+const legacySheets = await parse(new File([legacyZip], '旧版导图.xmind'));
+check('XMind 8 解析出图，根节点与子节点可读', () => {
+  assert.equal(legacySheets.length, 1);
+  assert.equal(legacySheets[0].rootTopic.title, '冰封恶疾');
+  const data = convertXmindToMindElixir(legacySheets[0]);
+  assert.equal(data.nodeData.topic, '冰封恶疾');
+  assert.equal(data.nodeData.children.length, 2);
+});
+check('损坏 / 占位 / 非 xmind 文件 → 可见拒绝，不留空图', () => {
+  assert.equal(inspectXmind(unzipSync(zipSync({ 'content.xml': S(UPGRADE_XML) }))).ok, false);
+  assert.equal(inspectXmind(unzipSync(zipSync({ 'a.txt': S('hello') }))).ok, false);
+  assert.throws(() => unzipSync(new Uint8Array([1, 2, 3, 4])));
+});
+
+// ---------- 汇总 ----------
+console.log(`\n=== 通过 ${results.length} 项断言 ===`);
+console.log(`
+沙盒已验：
+  · 30 条单元测试（契约 / 路径 / 依赖解析 / xmind 格式判定）
+  · 本冒烟 ${results.length} 项：三区输入 → 剥顶层 → R2 key 格局 → 依赖逐项断言 → 两代 xmind 出图
+  · Worker TypeScript 类型检查、Worker bundle 体积、前端 vendor 产物语法
+
+只能真机 / 用户本地验（见档案 §0.6）：
+  · Cloudflare Access 未登录 403、预签名 PUT 直传大包、R2 自定义域 + CORS GET
+  · 完整主控台（CSS 段截断样本未到手）的根相对路径写法与真实资源树
+  · 浏览器内 mind-elixir 实际渲染 / 多 sheet 切换 / 中文节点保真度
+  · 真实两代 .xmind 样本、加密损坏文件的下载兜底、预览库首屏体积
+  · D1 写入后浏览端卡片 +1、draft 隔离、单次上架不触发构建
+`);

@@ -1,0 +1,32 @@
+{
+  "name": "trpg-warehouse",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "公开只读的网页版 TRPG 模组库：浏览器内预览 .xmind，主控台原样托管，上传即上架",
+  "scripts": {
+    "build": "node scripts/build-web.mjs",
+    "test": "node --test shared/*.test.js",
+    "typecheck": "tsc --noEmit -p worker/tsconfig.json",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "d1:init": "wrangler d1 execute trpg-warehouse-db --file=./migrations/0001_init.sql",
+    "d1:init:local": "wrangler d1 execute trpg-warehouse-db --local --file=./migrations/0001_init.sql",
+    "r2:cors": "wrangler r2 bucket cors put trpg-warehouse-assets --file=./r2-cors.json",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "@mind-elixir/import-xmind": "1.0.8",
+    "aws4fetch": "1.0.20",
+    "fflate": "0.8.3",
+    "jose": "6.2.17",
+    "mind-elixir": "6.0.3",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "4.20251117.0",
+    "esbuild": "0.25.12",
+    "typescript": "5.9.3",
+    "wrangler": "4.45.3"
+  }
+}

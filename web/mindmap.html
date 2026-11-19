@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>思维导图 · TRPG 模组库</title>
+<link rel="stylesheet" href="/assets/site.css">
+<link rel="stylesheet" href="/vendor/mindmap.css">
+</head>
+<body class="mindmap-page">
+<header class="site-header">
+  <div class="site-header__inner">
+    <div class="brand"><h1>思维导图预览</h1><span>只读 · 浏览器内直接渲染 .xmind</span></div>
+    <p class="disclaimer">结构可读预览，不等同 XMind 客户端 100% 还原；原文件保持唯一真值，不生成第二份副本。</p>
+  </div>
+</header>
+<div id="status" class="status-bar">正在载入思维导图…</div>
+<div id="sheets" class="sheet-tabs" hidden></div>
+<div id="fallback" class="fallback" hidden>
+  解析未成功。你可以 <a id="download" href="#" download>下载原文件</a> 用本地 XMind 打开。
+  <div class="hint" id="detail"></div>
+</div>
+<div class="map-wrap"><div id="map"></div></div>
+<script type="module" src="/vendor/mindmap.js"></script>
+</body>
+</html>

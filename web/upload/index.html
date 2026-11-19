@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>上传模组 · TRPG 模组库</title>
+<link rel="stylesheet" href="/assets/site.css">
+</head>
+<body data-page="upload">
+<header class="site-header">
+  <div class="site-header__inner">
+    <div class="brand"><h1>上传模组</h1><span><a href="/">← 浏览端首页</a></span></div>
+    <p class="disclaimer">本页受 Cloudflare Access 保护；浏览端始终公开只读。</p>
+  </div>
+</header>
+<main>
+  <section class="section">
+    <h2>① 元数据</h2>
+    <div class="form-grid">
+      <div class="field"><label for="title">标题 *</label><input id="title" required placeholder="封冻恶疾"></div>
+      <div class="field"><label for="slug">slug *（英文小写短横线；留空自动从标题生成）</label><input id="slug" placeholder="frozen-malice"></div>
+      <div class="field"><label for="system">规则 system *</label>
+        <select id="system"><option value="dnd">dnd</option><option value="coc">coc</option><option value="other">other</option></select>
+      </div>
+      <div class="field"><label for="kind">类型 kind *（人工语义判定）</label>
+        <select id="kind"><option value="module">module · 有完整剧情的 one-shot</option><option value="campaign">campaign · 多次游戏</option><option value="encounter">encounter · 最简单钩子＋战斗</option></select>
+      </div>
+      <div class="field"><label for="status">状态 status *</label>
+        <select id="status"><option value="published">published · 立即上架</option><option value="draft">draft · 不进浏览端</option></select>
+      </div>
+      <div class="field"><label for="cover">封面（可选：包内相对路径或 https 外链）</label><input id="cover" placeholder="assets/cover.png"></div>
+      <div class="field" style="grid-column:1/-1"><label for="summary">简介 summary（可选）</label><textarea id="summary" placeholder="一句话简介"></textarea></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>② 三区输入</h2>
+    <div class="upload-zones">
+      <div class="zone">
+        <h3>① 主控台单文件</h3>
+        <p>平铺在条目根目录；原始文件名写进索引 consoleFile</p>
+        <input type="file" id="consoleFile" accept=".html,.htm">
+      </div>
+      <div class="zone">
+        <h3>② 思维导图单文件</h3>
+        <p>平铺在条目根目录；原始文件名写进索引 mindmapFile</p>
+        <input type="file" id="mindmapFile" accept=".xmind">
+      </div>
+      <div class="zone" id="dropZone">
+        <h3>③ 其余文件与文件夹（拖拽整树）</h3>
+        <p>把资源文件夹拖到这里，或点下方选择文件夹；保子目录、剥掉顶层文件夹名</p>
+        <input type="file" id="treeInput" webkitdirectory directory multiple>
+      </div>
+    </div>
+    <p id="treeSummary" class="hint">尚未选择资源树。</p>
+  </section>
+
+  <button id="submitBtn" class="btn">校验并上架</button>
+  <div id="progress" class="progress" hidden>
+    <span id="progressText">准备中…</span>
+    <div class="progress-bar"><i id="progressBar"></i></div>
+  </div>
+  <div id="result" class="result" hidden></div>
+</main>
+<script type="module" src="/vendor/upload.js"></script>
+</body>
+</html>
