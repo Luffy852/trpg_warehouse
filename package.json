@@ -8,11 +8,6 @@
     "build": "node scripts/build-web.mjs",
     "test": "node --test shared/*.test.js",
     "typecheck": "tsc --noEmit -p worker/tsconfig.json",
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
-    "d1:init": "wrangler d1 execute trpg-warehouse-db --file=./migrations/0001_init.sql",
-    "d1:init:local": "wrangler d1 execute trpg-warehouse-db --local --file=./migrations/0001_init.sql",
-    "r2:cors": "wrangler r2 bucket cors put trpg-warehouse-assets --file=./r2-cors.json",
     "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
@@ -27,6 +22,6 @@
     "@cloudflare/workers-types": "4.20251117.0",
     "esbuild": "0.25.12",
     "typescript": "5.9.3",
-    "wrangler": "4.45.3"
+    "wrangler": "4.165.0"
   }
 }

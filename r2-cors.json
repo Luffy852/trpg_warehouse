@@ -1,6 +1,6 @@
 [
   {
-    "AllowedOrigins": ["https://your-domain.example.com"],
+    "AllowedOrigins": ["https://REPLACE_WITH_YOUR_SITE_DOMAIN"],
     "AllowedMethods": ["GET", "HEAD", "PUT"],
     "AllowedHeaders": ["*"],
     "ExposeHeaders": ["ETag", "Content-Length", "Content-Type", "Content-Disposition"],

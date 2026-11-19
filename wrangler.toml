@@ -1,14 +1,23 @@
-# trpg-warehouse · B1 最小实现
-# 单 Worker：静态壳（Workers Assets）+ 唯一 Worker 脚本（API / Access / 预签名 / D1）
-# 上架不消耗任何构建：模组资源走 R2，索引走 D1，静态壳只在改代码时重新 deploy。
+# trpg-warehouse · 纯点击部署配置（GitHub 网页编辑 + Cloudflare Dashboard 点选）
 #
-# 部署前把下面 4 处 REPLACE 换成你自己的值，并用 `wrangler secret put` 写入 3 个 secret。
+# ★ 这份文件是绑定的唯一真值：Workers Builds 每次从 GitHub 部署都会以它为准，
+#   只在 Dashboard 里手加的 D1 / R2 绑定与 vars 会被覆盖掉，所以真实值必须写在这里。
+#   secrets 例外：在 Dashboard → Settings → Variables and Secrets 里加，部署会保留。
+#
+# ★ 部署全程不需要本地命令行。要填的只有下面 5 个 REPLACE_* 值，
+#   全部在 GitHub 网页打开本文件点铅笔 Edit 一次替换即可；
+#   第 6 个值「站点域名」不写在这里，用于 Access 应用与 R2 CORS。
+#   每个值从哪个页面复制，见 docs/部署指引_纯点击.md 第 1 步的「值清单」。
+#
+# 上架不消耗任何构建：模组资源走 R2，索引走 D1，静态壳只在 push 代码时重新部署。
 name = "trpg-warehouse"
 main = "worker/src/index.ts"
 compatibility_date = "2026-11-18"
 
 # 高频侧（首页 / 条目页 / 预览页 / CSS / JS）由边缘直出，不跑 Worker；
 # /api/* 与 /upload* 走 Worker，便于做 Access 校验与 API 路由。
+# 注意：/upload/index.html 是真实静态文件，必须靠 run_worker_first 让 Worker 先跑，
+#       否则会被边缘直接吐出来、绕过 Access。
 [assets]
 directory = "./web"
 binding = "ASSETS"
@@ -19,27 +28,35 @@ run_worker_first = [
   "/upload/*",
 ]
 
+# ① database_id：D1 SQL Databases → 你的数据库 → 详情页复制 Database ID
+#    database_name 必须与 Dashboard 里创建的库名完全一致：trpg-warehouse-db
 [[d1_databases]]
 binding = "DB"
 database_name = "trpg-warehouse-db"
 database_id = "REPLACE_WITH_D1_DATABASE_ID"
 migrations_dir = "./migrations"
 
+# ② bucket_name 必须与 Dashboard 里创建的桶名完全一致：trpg-warehouse-assets
 [[r2_buckets]]
 binding = "ASSETS_BUCKET"
 bucket_name = "trpg-warehouse-assets"
 
 [vars]
-# R2 自定义域公开读基址（不带末尾斜杠）；预览页与主控台内链都从这里拼。
-R2_PUBLIC_BASE_URL = "https://assets.example.com"
+# ③ R2 公开读基址（不带末尾斜杠）：R2 → bucket → Settings → Custom Domains 复制。
+#    预览页与主控台内链都从这里拼；没有自定义域时临时用 r2.dev 开发域。
+R2_PUBLIC_BASE_URL = "REPLACE_WITH_R2_PUBLIC_BASE_URL"
 R2_BUCKET = "trpg-warehouse-assets"
+# ④ Account ID：Cloudflare Dashboard 右侧栏 / 账户首页复制那串 32 位十六进制
 R2_ACCOUNT_ID = "REPLACE_WITH_CLOUDFLARE_ACCOUNT_ID"
-# Cloudflare Access 应用（保护 /upload* 与 /api/upload*）的 team domain 与 AUD
-CF_ACCESS_TEAM_DOMAIN = "REPLACE_WITH_TEAM.cloudflareaccess.com"
+# ⑤ Team domain：Zero Trust → Settings → Team domain（形如 xxxx.cloudflareaccess.com）
+# ⑥ AUD：Zero Trust → Access → Applications → 应用 Overview → Application Audience (AUD) Tag
+CF_ACCESS_TEAM_DOMAIN = "REPLACE_WITH_TEAM_DOMAIN"
 CF_ACCESS_AUD = "REPLACE_WITH_ACCESS_AUD"
 PRESIGN_EXPIRES = "3600"
 
-# secrets（不进仓库，用 `npx wrangler secret put <NAME>` 写入）：
+# 3 个 Secret 不写在这里，在 Dashboard → Worker → Settings → Variables and Secrets 加：
 #   R2_ACCESS_KEY_ID       R2 S3 API token 的 Access Key ID
 #   R2_SECRET_ACCESS_KEY   R2 S3 API token 的 Secret Access Key
 #   UPLOAD_TOKEN_SECRET    prepare→finalize 一次性令牌的 HMAC 密钥（随机长字符串）
+# 注意：不要用 Worker → Settings → Domains & Routes 的「Enable Cloudflare Access」一键开关，
+#       那个会把整个站点（含公开浏览端）都锁上；本项目只锁 /upload* 与 /api/upload*。

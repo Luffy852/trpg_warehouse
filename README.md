@@ -3,7 +3,8 @@
 公开只读的网页版 TRPG 模组库。上传者在受 Access 保护的 `/upload` 提交**主控台单文件 + `.xmind` 单文件 + 文件夹拖拽资源树**，浏览端即时上架；访客点卡片进条目页，并列拿到「思维导图 / 主控台」两个入口，思维导图在**浏览器内直接预览**，主控台原样托管、内部链接自然取到对应文件。
 
 > 本仓库是 **BC · B1** 首次开发产物，按《项目档案_trpg-warehouse_v1.md》§0 / §1 / §3.2 实现。
-> **代码已落盘并通过沙盒断言；Cloudflare 部署与真实样本仍需你在本机 / 真机验一次**（见文末）。
+> **部署方式是纯点击（GitHub 网页 + Cloudflare Dashboard + Workers Builds），不需要本地命令行**；步骤见 [`docs/部署指引_纯点击.md`](docs/部署指引_纯点击.md)。
+> 代码已通过 30 条单测 / 14 项离线冒烟 / TypeScript 类型检查；**Cloudflare 尚未部署，真实样本与真机验收仍待完成**。
 
 ---
 
@@ -44,81 +45,56 @@
 | `web/assets/*.js` `web/assets/site.css` | **源码**：改这里 |
 | `web/vendor/*` | **生成物**：改完 `web/assets/*.js` 跑 `npm run build` 重出，不直接手改 |
 | `migrations/0001_init.sql` | D1 `modules` 表（一条目一行，upsert） |
-| `r2-cors.json` | R2 CORS：同时放行浏览域 `GET` 与预签名 `PUT` |
+| `r2-cors.json` | R2 CORS 模板：粘贴到 Dashboard 的 CORS Policy JSON tab，同时放行 `GET` 与 `PUT` |
 | `scripts/build-web.mjs` `scripts/smoke.mjs` | 前端打包 / B1 离线冒烟（含两代 xmind 合成样本） |
-| `docs/项目档案_trpg-warehouse_v1.md` | 项目唯一信息载体（已更新到 B1 轮） |
+| `docs/部署指引_纯点击.md` | **部署步骤唯一出处**（网页点选，零命令行） |
+| `docs/项目档案_trpg-warehouse_v1.md` | 项目唯一信息载体（已更新到 B1-2 轮） |
 
 ---
 
-## 3. 先建仓（你来做）
+## 3. 部署（纯点击 · 不需要命令行）
 
-```bash
-cd trpg-warehouse
-git init
-git add .
-git commit -m "B1: 首个可部署实现（单 Worker + R2 + D1 + xmind 浏览器预览）"
-git remote add origin https://github.com/<你的用户名>/trpg-warehouse.git
-git branch -M main
-git push -u origin main
-```
+仓库已建立：**https://github.com/Luffy852/trpg_warehouse**（`main`，Public）。
 
-建好后把 **仓库地址 / `main`** 回填到 `docs/项目档案_trpg-warehouse_v1.md` §0.2 首行；之后新对话只传这一份档案即可。
+**部署全程在浏览器里完成**：GitHub 网页编辑 + Cloudflare Dashboard / Zero Trust 点选 + Workers Builds 自动构建。**不需要 clone、不需要装 Node、不需要任何 `npm` / `wrangler` / `git` 命令。**
 
-另开一个窗口装依赖：`npm install`（Node 20+）。
+> 📄 **详细步骤只写在 [`docs/部署指引_纯点击.md`](docs/部署指引_纯点击.md)**：值清单、每一步点哪里、粘贴哪段 SQL / JSON、排错表、纯点击验收清单都在那里。本节只给路线图，避免两份说明不一致。
 
----
+### 3.1 路线图
 
-## 4. Cloudflare 一次性配置（按顺序）
+| 阶段 | 在哪个网页 | 做什么 |
+|---|---|---|
+| 0 | GitHub | 上传纯点击补丁包（同名替换） |
+| 1 | — | 备好「值清单」（6 个配置值 + 3 个 Secret） |
+| 2 | Cloudflare Dashboard | 建 D1 `trpg-warehouse-db`、R2 `trpg-warehouse-assets`、R2 公开读域、R2 S3 API token |
+| 3 | Zero Trust | 设 team domain + 建 Self-hosted Access 应用（`/upload*`、`/api/upload*` 两条 path） |
+| 4 | GitHub | 网页编辑 `wrangler.toml`，一次填 5 个 `REPLACE_*` 值（第 6 个值「站点域名」用在 Access 应用与 CORS） |
+| 5 | Workers & Pages | **Create application → GitHub → Save and Deploy**（站点上线） |
+| 6 | Worker → Settings | 加 3 个 Secret → Deploy |
+| 7 | D1 → Studio | 粘贴建表 SQL → Run all statements |
+| 8 | R2 → Settings | 粘贴 CORS JSON（GET + PUT）→ Save |
+| 9 | Zero Trust | 校准 Access 应用域名（AUD 不变） |
+| 10 | 浏览器 | 按验收清单点一遍 |
 
-### 4.1 建 D1 与 R2
+### 3.2 三条最容易踩的坑
 
-```bash
-npx wrangler login
-npx wrangler d1 create trpg-warehouse-db          # 记下 database_id
-npx wrangler r2 bucket create trpg-warehouse-assets
-```
+1. **Project name 必须是 `trpg-warehouse`**（与 `wrangler.toml` 的 `name` 完全一致），否则 Workers Builds 直接报 name mismatch。
+2. **真实值必须写进 `wrangler.toml`**：Workers Builds 每次部署以仓库里的 Wrangler 配置为唯一真值，只在 Dashboard 手加的 D1 / R2 绑定与 vars 会被覆盖掉；**3 个 Secret 是例外**，在 Dashboard 加后会保留。
+3. **不要用 Worker → Settings → Domains & Routes 的「Enable Cloudflare Access」一键开关**：它会把整个站点（含公开浏览端）一起锁上。本项目只在 Zero Trust 建 Self-hosted 应用，用两条 path 锁写口；Worker 内再验一次 JWT 断言兜底。
 
-把 `database_id` 填进 `wrangler.toml` 的 `REPLACE_WITH_D1_DATABASE_ID`，再初始化表：
+### 3.3 Workers Builds 设置
 
-```bash
-npm run d1:init          # 远程
-npm run d1:init:local    # 本地 wrangler dev 用
-```
+| 字段 | 值 |
+|---|---|
+| Project name | `trpg-warehouse` |
+| Production branch | `main` |
+| **Build command** | **留空**（`web/vendor/*` 已随仓库提交，Worker 的 TS 由 wrangler 自动打包） |
+| Deploy command | 保持默认 `npx wrangler deploy` |
+| Root directory | 留空 |
 
-### 4.2 R2 自定义域 + CORS
+Workers Builds 会自动 clone 仓库并**自动安装依赖**。Free 计划每月 3,000 构建分钟、1 并发、单次 20 分钟超时；**上架模组不触发构建**，只有 push 代码才会。
 
-1. Cloudflare Dashboard → R2 → `trpg-warehouse-assets` → Settings → **Connect custom domain**，绑一个公开读域名（如 `assets.your-domain.com`；**别用 `r2.dev` 开发域**）。
-2. 把 `r2-cors.json` 里的 `AllowedOrigins` 换成你的站点域名（本地开发再补 `http://localhost:8787`）。
-3. `npm run r2:cors` 应用策略。预览页 `fetch` 需要 `GET`，浏览器直传需要 `PUT`，两者缺一不可。
-4. 把域名填进 `wrangler.toml` 的 `R2_PUBLIC_BASE_URL`（不带末尾斜杠），`R2_ACCOUNT_ID` 换成账户 ID。
-
-### 4.3 R2 S3 API 凭据 + 3 个 secret
-
-Dashboard → R2 → **Manage R2 API tokens** → 建一个 **Object Read & Write** 范围的 token，拿到 Access Key ID / Secret Access Key，然后：
-
-```bash
-npx wrangler secret put R2_ACCESS_KEY_ID
-npx wrangler secret put R2_SECRET_ACCESS_KEY
-npx wrangler secret put UPLOAD_TOKEN_SECRET     # 随机长字符串，如 openssl rand -hex 32
-```
-
-### 4.4 Cloudflare Access 保护写口
-
-Zero Trust → Access → Applications → **Self-hosted**：
-- 应用域名填你的 Worker 域名，路径包含 **`/upload*`** 与 **`/api/upload*`**（用一条应用加两条 path 规则，或两条应用）
-- 策略：Allow + 你的邮箱 / 指定身份
-- 记下 **Team domain**（`xxx.cloudflareaccess.com`）与 **Application AUD**，填进 `wrangler.toml` 的 `CF_ACCESS_TEAM_DOMAIN` / `CF_ACCESS_AUD`
-
-Worker 内还会再验一次 Access JWT 断言，防止绕过 route 直连 `workers.dev`。**隐藏路径 ≠ 鉴权**，这两层都要有。
-
-### 4.5 部署
-
-```bash
-npm run build        # 首次可跳过：vendor 产物已随仓库提交
-npm run deploy
-```
-
-本地调试：`npm run dev`（先跑 `npm run d1:init:local`）。
+之后改代码也一样纯点击：在 GitHub 网页改文件 → Commit → 自动重新部署，不必重做第 2–9 步。
 
 ---
 
@@ -162,14 +138,8 @@ npm run deploy
 | V-12 xmind 浏览器预览 | ✅ 两代格式合成样本解析出图 + 占位 XML / 损坏文件可见兜底；**真实样本与浏览器渲染待验** |
 | V-13 不养副本 / 不占 Worker | ✅ 解析全在访客浏览器，预览库在静态壳 |
 
-跑一遍本地断言：
-
-```bash
-npm test           # 30 条单测
-npm run smoke      # 14 项离线冒烟（含 XMind 2020+ 与 XMind 8 合成样本）
-npm run typecheck  # Worker TypeScript
-npx wrangler deploy --dry-run   # 可选：看构建产物
-```
+> **以上真机项按 [`docs/部署指引_纯点击.md`](docs/部署指引_纯点击.md) 第 10 步在浏览器里逐条点验，不需要命令行。**
+> 若你想在开发机上额外跑一遍离线断言（**部署完全不需要这一步**），才用得到 `npm test`（30 条单测）、`npm run smoke`（14 项离线冒烟）、`npm run typecheck`（Worker TypeScript）。
 
 ---
 
