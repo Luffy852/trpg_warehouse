@@ -2,7 +2,7 @@
 
 公开只读的网页版 TRPG 模组库。上传者在受 Access 保护的 `/upload` 提交**主控台单文件 + `.xmind` 单文件 + 文件夹拖拽资源树**，浏览端即时上架；访客点卡片进条目页，并列拿到「思维导图 / 主控台」两个入口，思维导图在**浏览器内直接预览**，主控台原样托管、内部链接自然取到对应文件。
 
-> 本仓库是 **BC · B1** 首次开发产物，按《项目档案_trpg-warehouse_v1.md》§0 / §1 / §3.2 实现。
+> 本仓库是 **BC · B1** 首次开发产物，按《项目档案_trpg-warehouse_v2.md》§0 / §1 / §3.2 实现。
 > **部署方式是纯点击（GitHub 网页 + Cloudflare Dashboard + Workers Builds），不需要本地命令行**；步骤见 [`docs/部署指引_纯点击.md`](docs/部署指引_纯点击.md)。
 > **成本控制（B1-3）**：R2 没有原生硬性账单上限，项目用「写口体积/容量闸门（含预留量）+ CDN 缓存/WAF + 账单告警 + **一键熔断**」兜底；原则是 **fail-closed（宁停不烧钱）**，且成本机制本身零定时/高频遍历。第三方建议的逐条核实与取舍见部署指引**附录 A**与 8.8 节，第 8 步是必做项。
 > 代码已通过 45 条单测 / 23 项离线冒烟 / TypeScript 类型检查 / bundle 486 KB；**Cloudflare 尚未部署，真实样本、成本控制真机项与验收仍待完成**。
@@ -50,7 +50,7 @@
 | `r2-cors.json` | R2 CORS 模板：粘贴到 Dashboard 的 CORS Policy JSON tab，同时放行 `GET` 与 `PUT` |
 | `scripts/build-web.mjs` `scripts/smoke.mjs` | 前端打包 / B1 离线冒烟（含两代 xmind 合成样本） |
 | `docs/部署指引_纯点击.md` | **部署步骤唯一出处**（网页点选，零命令行） |
-| `docs/项目档案_trpg-warehouse_v1.md` | 项目唯一信息载体（已更新到 B1-3 轮） |
+| `docs/项目档案_trpg-warehouse_v2.md` | **项目唯一信息载体**（v2；v1 已作废）。**§0.11 是每个新对话第一轮必读的「对话窗口硬盘体系」规程** |
 
 ---
 
@@ -66,7 +66,7 @@
 
 | 阶段 | 在哪个网页 | 做什么 |
 |---|---|---|
-| 0 | GitHub | 上传成本控制补丁包（整包同名替换） |
+| 0 | GitHub | 上传 `trpg-warehouse_v2补丁包.zip`（整仓同名替换；包内档案为 v2） |
 | 1 | — | 备好「值清单」（6 个配置值 + 3 个 Secret） |
 | 2 | Cloudflare Dashboard | 建 D1 `trpg-warehouse-db`、R2 `trpg-warehouse-assets`、**R2 自定义域**、R2 S3 API token；停用 r2.dev |
 | 3 | Zero Trust | 设 team domain + 建 Self-hosted Access 应用（`/upload*`、`/api/upload*` 两条 path） |
