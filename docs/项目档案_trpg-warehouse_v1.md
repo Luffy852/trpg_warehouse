@@ -3,10 +3,10 @@
 > 模板版本：**T3**（与手册 H3 / 框架 F3 同一整体版本）
 > 配套约定以《跨对话协作框架》现行版为准；正文不绑定手册 / 框架的具体版本号。
 > 最后更新：2026-11-19
-> 当前阶段：BC · B1-2（仓库已建、B1 代码已 push；纯点击部署指引已备，**Cloudflare 尚未部署**）
+> 当前阶段：BC · B1-3（成本控制已落代码与部署指引；**Cloudflare 仍完全未部署**）
 > 当前大阶段：**S1**
-> 本轮对话完成：**B1-2 纯点击部署口径**：用户建好公开仓 `Luffy852/trpg_warehouse` 并确认「依旧维持纯点击、不需要命令行」→ 交付 `docs/部署指引_纯点击.md`（10 步网页点选）、改造 `wrangler.toml` 为纯点击填空版、README 第 3–4 节改纯点击路线图、package.json 升级 wrangler 4.165.0 并移除 CLI 部署脚本；核实 Workers Builds 自动装依赖 / 配置唯一真值 / Access path 规则 / 一键开关风险；回填 §0.2 仓库地址；本档案自 v1 起为项目开发唯一信息载体
-> 档案体检：**总 480 行（wc -l 末次落盘实测）**；**§0 区块 = 第 16–214 行，共 199 行（含说明 / 空行 / 表头）**（模板 §7.6 口径＝只数数据行与代码块、不计说明文字，因完整版未到齐暂不折算；分档软阈值待补传完整版核对）。唯一硬约束 **§0.10 = 5 行，已守**；B1 / B1-2 只更新 §0 + §9，未并回 §1–§8
+> 本轮对话完成：**B1-3 R2 成本控制（跨两轮收尾）**：用户提出「R2 无原生硬性账单上限，需严格规避超量产生费用」并附第三方四维建议，又追加历史教训「定时遍历 alarm 一天烧爆 DO 免费读写次数」与偏好「免费页面工具宁愿崩掉 / 停止访问，也好过付大账单」→ 核实官方口径（Spend Management 仅 Workers/DO、明确不含 R2；Workers 硬上限触发只拒 Worker 调用；R2 Free 10GB/100万 A/1000万 B；r2.dev 不支持缓存与 WAF；Cache Rules Free 10 条、WAF 限流 Free 1 条、桶默认 7 天终止分片）→ 判定「Worker 代理 R2 借 Workers 硬上限兜底」前提不成立、外部 Cron 熔断与纯点击冲突且不能停公开 GET，**均不照搬**。落地：`shared/cost.js`（50MB/200MB/500 文件/8GB 累计容量 + fail-closed + `WRITES_ENABLED` 一键熔断）、`worker/src/index.ts` 写口闸门与 `upload_locks` 预留量（只增不减）、令牌成本字段完整性、原始 `head().size` 复核、`migrations/0001_init.sql` 加两张表字段、部署指引第 7/8/10 步与 8.8 反模式登记、附录 A 逐条对照；**成本机制自身零 cron / alarm / GraphQL / `list()` / 浏览请求触发的核算**，沙盒加源码静态断言防回潮；45 单测 / 23 冒烟 / typecheck / bundle 486 KB；本档案自 v1 起为项目开发唯一信息载体
+> 档案体检：**总 498 行（wc -l 末次落盘实测）**；**§0 区块 = 第 16–231 行，共 216 行（含说明 / 空行 / 表头）**（模板 §7.6 口径＝只数数据行与代码块、不计说明文字，因完整版未到齐暂不折算；分档软阈值待补传完整版核对；§0 已接近软阈值，下轮可考虑瘦身）。唯一硬约束 **§0.10 = 5 行，已守**；B1 / B1-2 / B1-3 只更新 §0 + §4 坑库（K-01 一条，待提炼）+ §9，未并回 §1–§3 / §5–§8
 >
 > **边界声明**：技术边界以《工具开发协作手册》H3 /《跨对话协作框架》F3 /《项目档案_模板》T3 三件套，以及本对话逐轮确认结论为准。《模组库项目_交接文档.md》及本轮上传的全部样本附件（主控台 HTML、译文 PDF、DDB 英文原页）**仅作参考，自 v1 起不再作为信息载体**，后续对话不必再上传。
 > **平台约束**：元宝不能读写你的本地文件。本档案由你**每轮手动保存**、下轮**手动上传**；代码仓库全部公开，走框架主路径，由平台拉取。详见框架「★ 平台约束」段。
@@ -24,62 +24,65 @@
 | 项 | 内容 |
 |---|---|
 | 这个工具是什么（一句话） | trpg-warehouse：公开只读的网页版 TRPG 模组库；条目页并列「思维导图 / 主控台」两个入口，**思维导图在浏览器内直接预览 `.xmind`**，主控台内链到模组原文与地图等资源；上传端受 Access 保护，**两个单文件 + 文件夹拖拽整树（保目录格局）**，上传后浏览端即时上架 |
-| 现在进展到哪一步 | **BC · B1-2 完成**：公开仓 `https://github.com/Luffy852/trpg_warehouse`（`main`，Initial package - B1）已建；B1 代码已 push 并通过 30 单测 / 14 冒烟 / typecheck；**纯点击部署指引已备**（`docs/部署指引_纯点击.md`）并已把 `wrangler.toml` / README / package.json 改成零命令行口径；**Cloudflare 仍完全未部署** |
-| 本轮对话要做什么 | **B1-2 已完成**；下一步＝用户按 `docs/部署指引_纯点击.md` 第 0–10 步在网页里点完（GitHub 网页编辑 + Dashboard / Zero Trust 点选 + Workers Builds 连仓库）→ 按第 10 步纯点击验收清单逐条点验 → 用真实主控台 / 资源树 / 两代 `.xmind` 回填 §0.6 |
-| 当前阶段 / 上一轮阶段 | BC · B1-2 / B1 |
+| 现在进展到哪一步 | **BC · B1-3 完成**：公开仓 `https://github.com/Luffy852/trpg_warehouse`（`main`）已建；B1/B1-2 代码与纯点击部署指引已备；**B1-3 成本控制已全部收尾**：写口体积/累计容量闸门 + `upload_locks` 预留量（只增不减）+ **fail-closed（数字不可信一律拒）** + **`WRITES_ENABLED` 一键熔断** + CDN/WAF/生命周期/告警 + 8.8 反模式登记 + 附录 A 逐条对照；**成本机制自身零 cron / alarm / 定时遍历 / GraphQL / `list()`**；45 单测 / 23 冒烟（含源码反模式静态审计）/ typecheck / bundle 486 KB 通过；**Cloudflare 仍完全未部署，成本控制补丁包待用户 GitHub 网页整包上传** |
+| 本轮对话要做什么 | **B1-3 已完成**；下一步＝用户上传成本控制补丁包 → 按 `docs/部署指引_纯点击.md` 第 0–10 步网页点完（**第 7 步建表 SQL 必须含 `total_bytes` 与 `upload_locks`、第 8 步成本控制与 8.8 熔断为必做**）→ 按第 10 步 **1–16 项**逐条点验 → 用真实主控台 / 资源树 / 两代 `.xmind` 回填 §0.6 |
+| 当前阶段 / 上一轮阶段 | BC · B1-3 / B1-2 |
 | **当前大阶段 S<N>** | **S1**（S 升级时本档案继续 v+1，不新建档案） |
-| **本档案权威路径** | 仓库 `docs/项目档案_trpg-warehouse_v1.md`（已随 B1 push；B1-2 版需用户按补丁包在 GitHub 网页替换）+ 用户本地工作路径；其余同名文件一律为镜像 / 快照 |
-| **最后更新轮次 / 日期** | **B1-2 / 2026-11-19**（与 §9 最后一行对齐） |
+| **本档案权威路径** | 仓库 `docs/项目档案_trpg-warehouse_v1.md`（已随 B1 push；**B1-3 版需用户按成本控制补丁包在 GitHub 网页替换**）+ 用户本地工作路径；其余同名文件一律为镜像 / 快照 |
+| **最后更新轮次 / 日期** | **B1-3 / 2026-11-19**（与 §9 最后一行对齐） |
 | 上次交接包 | **不适用**（主路径，不启用 §0.9） |
 
 ### 0.2 代码地图 / 产物清单（改东西前先找对文件）
 
-> ✅ **B1 代码已 push，B1-2 纯点击补丁包待用户在 GitHub 网页替换**：以下均为仓库实际文件。
+> ✅ **B1 代码已 push，B1-3 成本控制补丁包待用户在 GitHub 网页整包替换**：以下均为仓库实际文件（成本闸门跨文件，不能只换其中一两个）。
 
 | 文件 / 目录 | 身份 | 改前必读？ |
 |---|---|---|
 | **仓库地址 + 分支 + 拉取方式**（主路径必填） | **https://github.com/Luffy852/trpg_warehouse** / `main` / 公开、平台直接拉取（codeload）；Cloudflare Workers Builds 亦从该仓库 Git 集成部署 | — |
 | `docs/项目档案_trpg-warehouse_v1.md` | 本档案，唯一状态源 | 是 |
-| `docs/部署指引_纯点击.md` | **部署步骤唯一出处**：10 步网页点选（GitHub 网页编辑 + Dashboard / Zero Trust + Workers Builds），零命令行 | 是 |
-| `README.md` | 架构 / 目录 / 纯点击部署路线图（第 3 节）/ 验收对照 / 已知限制 | 是 |
-| `wrangler.toml`（仓库根） | 单 Worker + Assets 静态壳 + D1 / R2 绑定、路由、vars；**5 处 `REPLACE_*` 由用户在 GitHub 网页一次填齐**（第 6 个值「站点域名」用于 Access 应用与 CORS），是绑定唯一真值 | 是 |
-| `worker/src/index.ts` | **唯一 Worker**：Access 校验、预签名 PUT、上架断言、D1 读写、`GET /api/modules`、下载兜底 | 是 |
-| `worker/src/{schema,access,presign,token,types}.ts` | zod 枚举契约 / Access JWT 复验 / aws4fetch 预签名 / prepare→finalize HMAC 令牌 / 绑定类型 | 是 |
-| `shared/*.js` + `shared/*.test.js` | **唯一口径出处**：枚举 / slug / 剥顶层 / 依赖解析 / xmind 格式判定；30 条单测 | 是 |
+| `docs/部署指引_纯点击.md` | **部署步骤唯一出处**：10 步网页点选（GitHub 网页编辑 + Dashboard / Zero Trust + Workers Builds），零命令行；**第 8 步 = 成本控制必做**（CORS / Cache Rules / WAF / 防盗链 / 生命周期 / 账单告警 / 8.8 一键熔断与反模式登记）；**附录 A = 第三方建议逐条核实与取舍** | 是 |
+| `README.md` | 架构 / 目录 / 纯点击部署路线图（第 3 节）/ 验收对照 / 已知限制（含成本控制边界） | 是 |
+| `wrangler.toml`（仓库根） | 单 Worker + Assets 静态壳 + D1 / R2 绑定、路由、vars；**5 处 `REPLACE_*` 由用户在 GitHub 网页一次填齐**（第 6 个值「站点域名」用于 Access 应用与 CORS），是绑定唯一真值；**另 4 个 `MAX_*` / `BUCKET_CAP_GB` 是成本闸门可调阈值、`WRITES_ENABLED` 是一键熔断开关** | 是 |
+| `worker/src/index.ts` | **唯一 Worker**：Access 校验、预签名 PUT、**成本闸门（体积 / 数量 / 累计容量锁 / 真实 size 复核 / 预留量 / 一键熔断 / fail-closed）**、上架断言、D1 读写、`GET /api/modules`、下载兜底 | 是 |
+| `worker/src/{schema,access,presign,token,types}.ts` | zod 枚举契约（含 `sizes`）/ Access JWT 复验 / aws4fetch 预签名 / prepare→finalize HMAC 令牌（带体积声明与容量快照）/ 绑定类型 | 是 |
+| `shared/cost.js` + `shared/cost.test.js` | **成本控制唯一口径出处**：默认阈值、`readCostGuards`、`isWritesEnabled`、`assertCostToken`、`validateSizes`、`projectedUsage`、`exceedsBucketCap`、`verifyActualBytes`；**15 条单测**（含 fail-closed / 一键熔断 / 预留量） | 是 |
+| `shared/*.js` + `shared/*.test.js` | **唯一口径出处**：枚举 / slug / 剥顶层 / 依赖解析 / xmind 格式判定 / 成本控制；**45 条单测** | 是 |
 | `web/index.html` `web/module.html` | 首页（规则大区 / DND 分类）→ 卡片 → **条目页（仅思维导图 / 主控台两入口）**；无搜索框 | 是 |
 | `web/mindmap.html` | **xmind 预览页**：按 `?slug=` fetch R2 → 解 ZIP → 优先 `content.json` / 回退 `content.xml` → mind-elixir 只读画布；失败给可见提示 + 下载兜底 | 是 |
 | `web/upload/index.html` | `/upload`：**三区输入** + 元数据表单 + 预签名直传 + 上架后「卡片 +1」行为断言 | 是 |
 | `web/assets/*.js` `web/assets/site.css` | **前端源码**：改这里 | 是 |
 | `web/vendor/*` | **生成物**（esbuild 产物，随仓库提交）：改完源码跑 `npm run build` 重出，**不直接改** | 否 |
-| `scripts/build-web.mjs` `scripts/smoke.mjs` | 前端打包 / B1 离线冒烟（含两代 xmind 合成样本） | 是 |
-| `migrations/0001_init.sql` | D1 `modules` 表，一条目一行，**索引唯一真值** | 是 |
+| `scripts/build-web.mjs` `scripts/smoke.mjs` | 前端打包 / B1-3 离线冒烟（**23 项**：两代 xmind 合成样本 + 成本闸门 + fail-closed + **反模式静态审计**） | 是 |
+| `migrations/0001_init.sql` | D1 `modules` 表（一条目一行，**索引唯一真值**）+ **`upload_locks` 预留量表**；**`total_bytes` = 8GB 累计容量锁**，第 7 步建表 SQL 两者都必须含 | 是 |
 | `r2-cors.json` | CORS 模板：粘贴到 R2 Dashboard 的 CORS Policy JSON tab；浏览域 **GET**（预览页 fetch）+ 预签名 **PUT** | 是 |
 | R2 bucket + 自定义域名 | 资源直出，key 前缀 `modules/<slug>/...`；**仅被主控台内链接按需取用，不在浏览端列举** | — |
 
 > **主路径（有仓库）**：本栏已填全，新对话只传 1 份档案，不启用 §0.9 / 交接包 / 触发自检。
 > 生成物标「改脚本不改产物」；`docs/部署指引_纯点击.md` 是部署步骤唯一出处，README 只做索引。
 > **B1-2 口径**：部署走纯点击（Workers Builds Git 集成），仓库配置是绑定唯一真值；Dashboard 手加的 D1 / R2 绑定与 vars 会被 Git 部署覆盖，3 个 Secret 例外。
+> **B1-3 口径**：R2 无原生硬性账单上限 → 写口闸门在 `worker/src/index.ts` + `shared/cost.js` + D1 `total_bytes` / `upload_locks`，边缘防刷/告警在部署指引第 8 步纯点击配置，`WRITES_ENABLED` 一键熔断在 8.8；必须用 R2 **自定义域**（`r2.dev` 不支持缓存与 WAF）。设计原则是**宁停不烧钱 + 成本机制自身零定时遍历**（历史教训：定时 alarm 一天烧爆 DO 免费读写）。第三方「Worker 代理 R2 借 Workers 硬上限」前提不成立，见附录 A。
 
-### 0.3 怎么跑全量 + 当前基线（2026-11-18 实测；2026-11-19 改为纯点击口径）
+### 0.3 怎么跑全量 + 当前基线（2026-11-19 B1-3 实测）
 
-**部署 / 验收（现行，零命令行）**：按 `docs/部署指引_纯点击.md` 第 0–10 步在网页里点完；GitHub 网页改文件 → Workers Builds 自动构建部署。断言编号见 §6.2，真机未验项见 §0.6。
+**部署 / 验收（现行，零命令行）**：按 `docs/部署指引_纯点击.md` 第 0–10 步在网页里点完；**第 7 步建表 SQL 必须含 `total_bytes` 与 `upload_locks`，第 8 步成本控制与 8.8 一键熔断为必做**。GitHub 网页改文件 → Workers Builds 自动构建部署。断言编号见 §6.2，真机未验项见 §0.6。
 
 **可选 · 开发机离线断言**（部署完全不需要，也不要求用户执行）：
 ```
-npm test             # 30 条单测：契约 / 路径 / 依赖 / xmind 格式判定
-npm run smoke        # 14 项离线冒烟：三区输入 → 剥顶层 → key 格局 → 依赖断言 → 两代 xmind 出图
+npm test             # 45 条单测：契约 / 路径 / 依赖 / xmind 格式判定 / 成本闸门 / fail-closed / 一键熔断
+npm run smoke        # 23 项离线冒烟：三区输入 → 剥顶层 → key 格局 → 依赖断言 → 两代 xmind 出图 → 成本闸门 → 反模式静态审计
 npm run typecheck    # Worker TypeScript
 npm run build        # 改过 web/assets/*.js 后重出 vendor（生成物，不直接改）
 ```
 
 | 基线项 | 实测值 | 日期 |
 |---|---|---|
-| 测试 / 断言总数 | **30 单测 + 14 冒烟 = 44 条断言**（先红后绿，含「删一个被引用文件断言真的会红」） | 2026-11-18 |
-| 产物体积 / 行数 | Worker bundle **480 KB**（minified，< 3 MB 限额）；`web/vendor/` 合计 **270 KB**（预览库全在静态壳，不占 Worker 限额）；仓库源码 + 配置 **2140 行**（不含 node_modules / vendor / 档案 / README） | 2026-11-18 |
-| 类型检查 / 语法 | Worker `tsc --noEmit` 通过；全部 vendor 产物 `node --check` 通过 | 2026-11-18 |
+| 测试 / 断言总数 | **45 单测 + 23 冒烟 = 68 条断言**（先红后绿，含「删一个被引用文件断言真的会红」「预留量只增不减」「反模式静态审计」） | 2026-11-19 |
+| 产物体积 / 行数 | Worker bundle **486 KB**（minified，< 3 MB 限额）；`web/vendor/` 合计 **272 KB**（预览库全在静态壳，不占 Worker 限额）；仓库源码 + 配置 **2817 行**（不含 node_modules / vendor / 档案 / README） | 2026-11-19 |
+| 类型检查 / 语法 | Worker `tsc --noEmit` 通过；全部 `shared/*.js` / `scripts/*.mjs` / `web/vendor/*.js` `node --check` 通过 | 2026-11-19 |
+| 成本机制自身开销（设计值，非真机） | 单次上架最坏：2 次 D1 读 + 3 次 D1 写 + ≤500 次 R2 `head()`；**0 次 cron / alarm / GraphQL / `list()` / 浏览请求触发的核算** | 2026-11-19 |
 
-> **B1 沙盒已验**：枚举 / 剥顶层 / R2 key 格局 / 按实际引用逐项断言 / 重名拒绝 / 两代 `.xmind` 合成样本解析出图 / 占位 XML 与损坏文件可见兜底 / Worker 体积与类型。
-> **未混入已完成**：Access 403、预签名 PUT 直传、R2 CORS GET、D1 写后浏览端卡片 +1、浏览器内实际渲染、真实两代样本保真度 —— 全部仍列 §0.6。
+> **B1-3 沙盒已验**：B1 全项 + 体积/数量/累计容量闸门、真实 `head().size` 复核、旧版令牌拒写、不可信数字拒写、一键熔断开关、预留量只增不减、迁移/指引不漏表、**源码不含定时遍历反模式**（静态断言）。
+> **未混入已完成**：Access 403、预签名 PUT 直传、R2 CORS GET、D1 写后浏览端卡片 +1、浏览器内实际渲染、真实两代样本保真度、缓存命中不回源、WAF 限流、Billing 告警、一键熔断 503 真机、预留量累积行为 —— 全部仍列 §0.6。
 
 ### 0.4 已定口径（用户拍过板，不要擅自改）
 
@@ -113,8 +116,13 @@ npm run build        # 改过 web/assets/*.js 后重出 vendor（生成物，不
 | **部署方式（B1-2 用户明确「依旧维持纯点击、不需要命令行」）** | **纯网页点选**：GitHub 网页编辑 `wrangler.toml` 一次填 5 个值 → Cloudflare Dashboard / Zero Trust 点选建资源 → **Workers Builds 连 GitHub 自动 clone + 自动装依赖 + 自动部署**。不要求用户 clone / 装 Node / 跑 `npm`·`wrangler`·`git` 命令；仓库里也不再保留 CLI 部署脚本。步骤唯一出处＝`docs/部署指引_纯点击.md` |
 | **配置唯一真值（B1-2 核实）** | Workers Builds 每次 Git 部署以仓库 `wrangler.toml` 为唯一真值，**只在 Dashboard 手加的 D1 / R2 绑定与 vars 会被覆盖**；3 个 Secret 例外（Dashboard 加后保留）。故资源 ID / 域名 / AUD 必须写回仓库，不能只点 Dashboard |
 | **Access 保护范围（B1-2 核实）** | 只用 Zero Trust **Self-hosted 应用 + 两条 path**（`/upload*`、`/api/upload*`）；**禁用** Worker → Settings → Domains & Routes 的「Enable Cloudflare Access」一键开关（它会把公开浏览端、预览 URL 一起锁上）。Worker 内仍验 JWT 断言兜底 |
+| **R2 成本控制前提（B1-3 核实）** | R2 Free = 10 GB-month / 100 万 Class A（PUT、LIST、multipart）/ 1000 万 Class B（GET、HEAD）；**Spend Management 硬支出上限目前只覆盖 Workers 与 Durable Objects，官方明确不含 R2**，触发时也只拒 Worker 调用（1103）、静态资源仍可访问。故「Worker 代理 R2 借 Workers 硬上限兜底」前提不成立，不照搬；用**减少回源读取（CDN + WAF）+ 写口卡容量**代替 |
+| **宁停不烧钱（B1-3 用户明确）** | 用户原话：这类免费页面工具，**宁愿在代码设计不够好时崩掉或停止访问，也好过付大账单**；并给出历史教训：一个「定时遍历 alarm」为追求理论最优，一天烧爆 Durable Objects 免费读写次数，实跑收益成本完全不对等。故所有成本机制一律 **fail-closed**：数字不可信（D1 查询失败 / 旧版令牌缺字段 / `head().size` 不可用 / 配置不可信）→ 503 / 413 拒绝，绝不「算了放行」 |
+| **成本机制自身零高频开销（B1-3）** | **禁止** cron / `scheduled` / DO alarm / `setInterval` / 每次请求查用量 / GraphQL 轮询 / R2 `list()` 遍历。容量核算只在 `prepare` / `finalize` 两次写口做 O(1) 的 D1 聚合（Access 保护 + 人触发），**不上架就零成本核算开销**；沙盒有静态断言扫描源码防回潮（部署指引 8.8 反模式登记） |
+| **预留量只增不减（B1-3）** | `prepare` 先在 D1 `upload_locks` 记预留量再签 URL，`finalize` 索引读回确认后才删。上传中途关页面 / 失败 → 预留永久留下，容量锁**宁可高估提前拦死，也不少算**；不为「精确到字节」去遍历桶（那反而更贵） |
+| **一键熔断（B1-3，纯点击）** | `wrangler.toml` 的 `WRITES_ENABLED = "0"` → GitHub 网页 Commit → `prepare`/`finalize` 立刻 503 `WRITES_DISABLED`；配合 R2 → Settings → Custom Domains → Disable domain 切断公开读。恢复改回 `"1"` + Enable domain，无需改代码。**不引入外部 Cron 熔断脚本**（需常驻脚本 + API Token，且删 API Token 对公开自定义域 GET 无效） |
 
-> 本栏是**给新对话读的口径快照**（只写结论）；完整理由、技术选型、风险偏好、已否决方案放 §2。
+> 本栏是**给新对话读的口径快照**（只写结论）；完整理由、技术选型、风险偏好、已否决方案放 §2，第三方建议逐条核实见 `docs/部署指引_纯点击.md` 附录 A。
 
 ### 0.5 禁改清单（源码注释里写了原因，这里再提一次）
 
@@ -124,12 +132,17 @@ npm run build        # 改过 web/assets/*.js 后重出 vendor（生成物，不
 - **不许把 D1 / R2 绑定和 vars 只加在 Cloudflare Dashboard**：Workers Builds 每次 Git 部署以 `wrangler.toml` 覆写，Dashboard 手加的会静默消失（B1-2 核实）。真实值必须写回仓库；3 个 Secret 例外。
 - **不许用 Worker 的「Enable Cloudflare Access」一键开关**：它会锁住整个站点而非只锁写口，与「浏览端公开只读」冲突。
 - **不许在部署指引里重新引入本地 CLI 步骤**：用户已明确纯点击口径；`docs/部署指引_纯点击.md` 是部署步骤唯一出处，README 只做索引。
+- **不许给成本机制加定时 / 轮询 / 遍历**（B1-3）：不加 `scheduled`、Cron Trigger、DO alarm、`setInterval`、每次请求查用量、GraphQL 用量轮询、R2 `list()` 对账。历史教训是一个定时遍历 alarm 一天烧爆 DO 免费读写；核算只在写口做，沙盒静态断言会拦回潮。
+- **不许把「拿不到可信数字」改成放行**（B1-3）：D1 聚合失败、旧版令牌缺 `declaredTotalBytes` / `bucketCapBytes`、`head().size` 不可用、容量配置不可信，一律 503 / 413 拒绝。这是「宁停不烧钱」的硬要求，不是可以优化掉的保守。
+- **不许让 `upload_locks` 预留量自动过期或被定时清理**：预留只增不减是刻意的保守；删掉它等于让「上传中途放弃」的 R2 对象不被计入容量锁。清理只能由用户在 D1 Studio 手动确认后做。
+- **不许给 R2 桶加「N 天后删除对象」生命周期规则**：本库是永久资料库，删对象会让 D1 索引还在但资源 404；只保留未完成分片上传的清理（桶默认 7 天，可收紧到 1 天）。
+- **不许把 R2 换成 `r2.dev` 开发域对外**：官方明确它不支持 WAF / 缓存 / 访问控制，用它会让第 8 步的成本控制全部失效。
 
 ### 0.6 未验事项（带「何时能验」，别混进「已完成」）★
 
-> **B1 / B1-2 补充**：下表逻辑多数已在代码里落盘、且离线断言通过（§0.3），但「代码写了」≠「验过了」。
-> 凡写「B1 部署后 / 真机 / 完整主控台 / 真实样本」的项**一律仍视为未验**；B1 用合成 `.xmind` 验的是**解析链路与失败兜底**，不验浏览器渲染保真度。
-> **仓库已建、Cloudflare 尚未部署**；部署后按 `docs/部署指引_纯点击.md` 第 10 步逐条回填。
+> **B1 / B1-2 / B1-3 补充**：下表逻辑多数已在代码里落盘、且离线断言通过（§0.3），但「代码写了」≠「验过了」。
+> 凡写「B1 部署后 / 真机 / 完整主控台 / 真实样本」的项**一律仍视为未验**；B1 用合成 `.xmind` 验的是**解析链路与失败兜底**，不验浏览器渲染保真度；B1-3 的 45 单测 / 23 冒烟只验**成本判定逻辑与源码反模式**，不验 Cloudflare 真机用量曲线。
+> **仓库已建、Cloudflare 尚未部署**；部署后按 `docs/部署指引_纯点击.md` 第 10 步 1–16 项逐条回填。
 
 | 项 | 何时能验 | 说明 |
 |---|---|---|
@@ -156,6 +169,10 @@ npm run build        # 改过 web/assets/*.js 后重出 vendor（生成物，不
 | **配置唯一真值的真机复核**（B1-2 新增） | 第 5 步部署后再 push 一次 | 确认 Git 部署后 D1 / R2 绑定与 6 个 vars 仍在、3 个 Secret 仍在；确认没有「只在 Dashboard 手加 → 被覆盖」的静默失效 |
 | **纯点击流程全程无命令行**（B1-2 新增） | 用户实际走完第 0–10 步 | GitHub 网页上传补丁包 / 编辑 `wrangler.toml`、Dashboard 点选、Workers Builds 部署是否真的不需要终端；任何一步卡住按排错表回填 |
 | **R2 公开读域正式化**（B1-2 新增） | 有自定义域后 | 若先用 `r2.dev` 开发域跑通，须换成自定义域并同步改 `R2_PUBLIC_BASE_URL` + CORS `AllowedOrigins`（§0.4 仍定生产用自定义域） |
+| **成本控制真机项**（B1-3 新增） | 纯点击第 8 / 10 步真机 | Cache Rules 命中是否真的不回源（`cf-cache-status: HIT`）、WAF 单 IP 限流 / Hotlink Protection、Billing 告警是否可达、`QUOTA_EXCEEDED` / `BUCKET_CAP_EXCEEDED` 413 回执、`total_bytes` 与 `upload_locks` 两张表是否按第 7 步建全 |
+| **一键熔断闭环**（B1-3 新增） | 第 10 步第 15 项真机 | 把 `WRITES_ENABLED` 改成 `"0"` 并 Commit 后 `prepare`/`finalize` 是否 503 `WRITES_DISABLED`、不写 R2 / D1；改回 `"1"` 是否恢复；配合 Disable R2 自定义域是否立刻切断公开读 |
+| **预留量累积行为**（B1-3 新增） | 第 10 步第 16 项真机 | 正常上架后 `upload_locks` 应为空；上传中途关页面应留下一条永久预留；fail-closed 的 503 `USAGE_UNAVAILABLE` / `INVALID_COST_TOKEN` 是否真的拒写索引 |
+| **成本机制自身不烧额度**（B1-3 新增） | 部署后看账单 / Metrics | 确认没有 cron / alarm / 定时遍历被引入；确认浏览端请求不触发容量核算；确认「不上架就零成本核算开销」在真实用量曲线上成立（历史教训：定时遍历一天烧爆 DO 免费读写） |
 
 > 按框架第六章段判据：**登记是硬门槛、完成不是**。未验项照常写进本节，不影响功能冻结、进入 D 段。
 > **主路径不启用 §7 交接自检**，无需登记自检阈值。
@@ -384,7 +401,7 @@ npm run build        # 改过 web/assets/*.js 后重出 vendor（生成物，不
 
 | # | 症状 | 真实病因 | 为什么之前没发现 | 怎么规避 | 状态 |
 |---|---|---|---|---|---|
-| | | | | | 待提炼 / 已回填 |
+| K-01 | 某工具用「定时遍历 alarm」保持状态最新，一天内烧爆 Durable Objects 免费读写次数（用户 B1-3 轮口述的历史案例） | 设计目标是「理论情境下的实时最优」，但**成本 = 定时频率 × 每次遍历对象数 × 天数**；收益（状态更新鲜一点）与成本完全不对等，免费额度根本撑不住 | 只按单次调用的成本估算，没把「定时器会一直跑」乘进去；也没把「机制自身」当成额度消费者来审计 | ① 免费额度项目一律 **fail-closed**：宁可崩掉 / 停止访问也不烧钱；② **禁止** cron / `scheduled` / DO alarm / `setInterval` / 每次请求查用量 / GraphQL 轮询 / 桶 `list()` 遍历；③ 核算只在低频写口做 O(1) 聚合，不上架就零开销；④ 本仓库已加源码静态断言防回潮（部署指引 8.8 反模式登记） | 待提炼 |
 
 ### 4.1 方法论提炼
 
@@ -478,3 +495,4 @@ npm run build        # 改过 web/assets/*.js 后重出 vendor（生成物，不
 | **A-1d** | A xmind 查看形态纠偏（同日增量，不升版） | 用户明确「本来预计浏览器直接预览」→ 覆盖 A-1c/A-1b 的「下载 + 本地打开」；定**浏览端运行时解析**（解 ZIP → `content.json` / 回退 `content.xml` → mind-elixir 只读画布），下载仅作失败兜底；核实两代格式、CORS GET、加密兜底、保真度边界；预览移出 backlog 进 B1；新增 V-13，改写 V-12 | §0.1（状态快照 / 最后更新轮次对齐）、§0.2、§0.4（新增 2 条口径 + 改 1 条）、§0.6（改 2 条 + 新增 5 条）、§0.7、§0.10（P-03 改写）、§1、§2.1、§2.2、§3.1/3.2/3.3、§5、§6.1/6.2、§9 | 否（主路径） | 0 |
 | **B1** | BC · B1 最小实现 | 本地公开仓骨架落盘：单 Worker + Workers Assets 静态壳 + D1/R2 绑定 + Access JWT 复验 + 预签名直传；三区上传（剥顶层 / 重名拒 / 按主控台实际引用逐项断言 / 卡片 +1 行为断言）；条目页仅思维导图 + 主控台两入口；xmind 浏览端运行时解析只读预览 + 失败下载兜底；`shared/*` 唯一口径 + 30 单测 + 14 项离线冒烟（两代 xmind 合成样本出图）；README 部署指引；**仓库地址待用户建仓回填** | §0.1、§0.2、§0.3、§0.5、§0.6、§9 | 否（主路径） | 0 |
 | **B1-2** | BC · B1-2 纯点击部署口径（不升版，增量） | 用户建好公开仓 `Luffy852/trpg_warehouse`（main）并明确「依旧维持纯点击、不需要命令行」→ 新增 `docs/部署指引_纯点击.md`（10 步网页点选 + 值清单 + 排错表 + 纯点击验收清单）；`wrangler.toml` 改成 5 处填空 + Dashboard 注释；README 第 3–4 节改纯点击路线图、CLI 部署脚本从指引移除；`package.json` 升 wrangler 4.165.0、移除 CLI 部署脚本；`r2-cors.json` 改 Dashboard 粘贴模板；核实 Workers Builds 自动装依赖 / 配置唯一真值 / Access path 与一键开关风险 / Free 3000 构建分钟；**仓库地址已回填**；Cloudflare 仍未部署 | §0.1（状态快照 / 最后更新轮次对齐）、§0.2（仓库地址回填 + 新增部署指引入地图）、§0.3（命令块改纯点击口径）、§0.4（新增 3 条口径）、§0.5（新增 4 条禁改）、§0.6（说明改引用 + 新增 5 条未验）、§0.9 不适用、§9 | 否（主路径） | 0 |
+| **B1-3** | BC · B1-3 R2 成本控制（不升版，增量，跨两轮完成） | 用户提出「R2 无原生硬性账单上限，需严格规避超量产生费用」并附第三方四维建议；又追加历史教训：一个定时遍历 alarm 为追求理论最优，一天烧爆 DO 免费读写次数，明确「免费页面工具宁愿崩掉 / 停止访问，也好过付大账单」。→ 核实官方口径（Spend Management 仅 Workers/DO、明确不含 R2；Workers 硬上限只拒 Worker 调用；R2 Free 10GB/100 万 A/1000 万 B；r2.dev 不支持缓存与 WAF；Cache Rules Free 10 条、WAF 限流 Free 1 条、桶默认 7 天终止分片）→ 判定「Worker 代理 R2 借 Workers 硬上限」前提不成立、「外部 Cron 自动熔断」与纯点击冲突且不解决公开 GET，**均不照搬**。落地：新增 `shared/cost.js`（体积/数量/累计容量阈值 + fail-closed + 一键熔断），Worker `prepare`/`finalize` 加写口闸门与 D1 `upload_locks` 预留量（只增不减）、令牌成本字段完整性校验、原始 `head().size` 复核、`WRITES_ENABLED` 熔断 503；`migrations/0001_init.sql` 加 `total_bytes` + `upload_locks`；部署指引第 7 步建表 SQL 同步、第 8 步扩为 CORS/Cache Rules/WAF/防盗链/生命周期/账单告警/8.8 一键熔断与反模式登记、附录 A 逐条对照；验收清单加到 16 项、排错表补 4 条；README 与 §0 全量同步；**45 单测 / 23 冒烟（含源码反模式静态审计）/ typecheck / bundle 486 KB**；成本机制自身零 cron / alarm / GraphQL / `list()` / 浏览请求触发的核算。Cloudflare 仍完全未部署 | §0.1（状态快照 / 最后更新轮次 B1-3 对齐）、§0.2（补成本模块 / 预留量表 / 熔断开关）、§0.3（基线 45+23 / 486 KB / 2817 行 + 机制自身开销）、§0.4（新增 5 条口径）、§0.5（新增 5 条禁改）、§0.6（说明改 B1-3 + 新增 4 条真机项）、§4 坑库（K-01 定时遍历烧额度，待提炼）、§0.9 不适用、§9 | 否（主路径） | 0 |

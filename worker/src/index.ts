@@ -8,6 +8,15 @@ import { signToken, verifyToken } from './token';
 import { validateMeta } from '../../shared/contract.js';
 import { isUnsafeRelativePath, findDuplicateNames, buildUploadPlan } from '../../shared/paths.js';
 import { extractReferences, buildAvailableSet, findMissingDeps } from '../../shared/deps.js';
+import {
+  readCostGuards,
+  isWritesEnabled,
+  assertCostToken,
+  validateSizes,
+  projectedUsage,
+  exceedsBucketCap,
+  verifyActualBytes,
+} from '../../shared/cost.js';
 import type { Env, ModuleRow } from './types';
 
 const JSON_HEADERS = {
@@ -89,6 +98,14 @@ async function handleModules(env: Env): Promise<Response> {
 
 // 上架前权威校验 + 签发预签名 URL。任何一项不过都不写索引。
 async function handlePrepare(request: Request, env: Env): Promise<Response> {
+  // 一键熔断（纯点击：GitHub 网页把 WRITES_ENABLED 改成 "0" → Commit 即生效）。
+  // 宁可停止上架，也不在额度不明时继续写 R2。
+  if (!isWritesEnabled(env)) {
+    return json(
+      { error: '写口已熔断，暂停上架（成本保护）', code: 'WRITES_DISABLED' },
+      503,
+    );
+  }
   const body = await request.json().catch(() => null);
   const parsed = prepareSchema.safeParse(body);
   if (!parsed.success) {
@@ -134,6 +151,69 @@ async function handlePrepare(request: Request, env: Env): Promise<Response> {
   }
 
   const plan = buildUploadPlan(meta.slug, meta.consoleFile, meta.mindmapFile, meta.relativePaths);
+
+  // ── 成本闸门 ①：体积 / 文件数 ────────────────────────────────────────────
+  // R2 没有原生硬性账单上限，且 Workers Spend Management 明确不含 R2；
+  // 所以必须在写口自己卡住，不能指望 Worker 限额替 R2 兜底。
+  const guards = readCostGuards(env);
+  const sizeCheck = validateSizes({ sizes: meta.sizes, plan, guards });
+  if (sizeCheck.errors.length) {
+    return json(
+      { error: '文件体积或数量超过成本闸门，拒绝上架', code: 'QUOTA_EXCEEDED', details: sizeCheck.errors },
+      413,
+    );
+  }
+
+  // ── 成本闸门 ②：D1 累计容量锁（替代外部 Cron 熔断，纯网页改配置即可调） ──
+  // used = 已上架条目真实体积 + 未 finalize 的预留量。预留量只增不减（fail-closed）：
+  // 浏览器拿到预签名 URL 后关掉页面 / finalize 失败，R2 里会留下对象但 D1 没有索引，
+  // 若不计预留就会少算，容量锁形同虚设。
+  // 这条聚合只在写口跑（Access 保护、人触发），不在浏览请求里跑，也不是定时遍历。
+  const usage = await env.DB.prepare(
+    `SELECT
+       (SELECT COALESCE(SUM(total_bytes), 0) FROM modules) +
+       (SELECT COALESCE(SUM(reserved_bytes), 0) FROM upload_locks) AS used,
+       COALESCE((SELECT total_bytes FROM modules WHERE slug = ?), 0) +
+       COALESCE((SELECT reserved_bytes FROM upload_locks WHERE slug = ?), 0) AS replacing`,
+  )
+    .bind(meta.slug, meta.slug)
+    .first<{ used: number; replacing: number }>();
+  // fail-closed：拿不到可信数字就拒，不「算了放行」
+  if (!usage || !Number.isSafeInteger(usage.used) || !Number.isSafeInteger(usage.replacing)) {
+    return json(
+      { error: '容量核算不可用，拒绝上架（成本保护）', code: 'USAGE_UNAVAILABLE' },
+      503,
+    );
+  }
+  const projected = projectedUsage(
+    usage.used,
+    usage.replacing,
+    sizeCheck.declaredTotalBytes,
+  );
+  if (exceedsBucketCap(projected, guards.bucketCapBytes)) {
+    return json(
+      {
+        error: '累计容量将超过 R2 免费额度闸门，拒绝上架',
+        code: 'BUCKET_CAP_EXCEEDED',
+        details: [
+          `当前累计 ${(usage.used / 1024 / 1024 / 1024).toFixed(2)} GB（含未 finalize 的预留量），本次 ${(sizeCheck.declaredTotalBytes / 1024 / 1024).toFixed(1)} MB，闸门 ${(guards.bucketCapBytes / 1024 / 1024 / 1024).toFixed(0)} GB`,
+          '请先在 R2 Dashboard 清理旧条目 / 残留对象，或在 wrangler.toml 调整 BUCKET_CAP_GB',
+        ],
+      },
+      413,
+    );
+  }
+
+  // 先记预留，再签 URL：签名过程中途失败也会留下预留量，宁可高估也不少算。
+  await env.DB.prepare(
+    `INSERT INTO upload_locks (slug, reserved_bytes, updated_at)
+     VALUES (?, ?, datetime('now'))
+     ON CONFLICT(slug) DO UPDATE SET
+       reserved_bytes = excluded.reserved_bytes, updated_at = datetime('now')`,
+  )
+    .bind(meta.slug, sizeCheck.declaredTotalBytes)
+    .run();
+
   const expires = Math.max(60, Math.min(3600, Number(env.PRESIGN_EXPIRES) || 3600));
   const uploads: Array<{ relativePath: string; key: string; url: string }> = [];
   for (const item of plan) {
@@ -157,6 +237,8 @@ async function handlePrepare(request: Request, env: Env): Promise<Response> {
       mindmapFile: meta.mindmapFile,
     },
     keys: plan.map((p) => p.key),
+    declaredTotalBytes: sizeCheck.declaredTotalBytes,
+    bucketCapBytes: guards.bucketCapBytes,
     exp: Date.now() + expires * 1000,
   });
 
@@ -175,20 +257,39 @@ async function handlePrepare(request: Request, env: Env): Promise<Response> {
 
 // 追到真实写入：先 head 每个 R2 对象，再 upsert D1，最后写后读回断言。
 async function handleFinalize(request: Request, env: Env): Promise<Response> {
+  // 一键熔断同样管住 finalize：熔断后不允许有在途上架把索引写回来
+  if (!isWritesEnabled(env)) {
+    return json(
+      { error: '写口已熔断，暂停上架（成本保护）', code: 'WRITES_DISABLED' },
+      503,
+    );
+  }
   const body = (await request.json().catch(() => null)) as { token?: string; slug?: string } | null;
   const payload = await verifyToken(env, body?.token);
   if (!payload) {
     return json({ error: '上架令牌无效或已过期', code: 'INVALID_TOKEN' }, 403);
+  }
+  // fail-closed：旧版令牌 / 被篡改的令牌缺成本字段，一律拒，不「当作 0 放行」
+  const tokenErrors = assertCostToken(payload);
+  if (tokenErrors.length) {
+    return json(
+      { error: '上架令牌缺少成本字段，拒绝写索引', code: 'INVALID_COST_TOKEN', details: tokenErrors },
+      403,
+    );
   }
   if (body?.slug && body.slug !== payload.slug) {
     return json({ error: 'slug 与令牌不一致', code: 'SLUG_MISMATCH' }, 400);
   }
 
   // 「上传成功」≠「浏览端多了一张卡」：文件没真写进去就不写索引（P-05）
+  // 顺便用 R2 的真实 size 复核 prepare 时的声明，防止少报体积绕过成本闸门。
   const missing: string[] = [];
+  const actualSizes: number[] = [];
   for (const key of payload.keys) {
     const head = await env.ASSETS_BUCKET.head(key);
     if (!head) missing.push(key);
+    // 不做 `Number(head.size) || 0` 的兜底：拿不到可信 size 就让它进 verifyActualBytes 被拒
+    else actualSizes.push(head.size as number);
   }
   if (missing.length) {
     return json(
@@ -197,34 +298,102 @@ async function handleFinalize(request: Request, env: Env): Promise<Response> {
     );
   }
 
+  const guards = readCostGuards(env);
+  const actual = verifyActualBytes({
+    actualSizes,
+    declaredTotalBytes: payload.declaredTotalBytes,
+    guards,
+  });
+  if (actual.errors.length) {
+    return json(
+      { error: '实际写入体积超过成本闸门，索引未更新', code: 'QUOTA_EXCEEDED', details: actual.errors },
+      413,
+    );
+  }
+
+  // 容量锁二次复核：prepare 到 finalize 之间可能有别的条目上架，用真实字节再算一次。
+  // 本 slug 的预留量同时出现在 used 和 replacing 里，正好抵消，不会重复计。
+  const usage = await env.DB.prepare(
+    `SELECT
+       (SELECT COALESCE(SUM(total_bytes), 0) FROM modules) +
+       (SELECT COALESCE(SUM(reserved_bytes), 0) FROM upload_locks) AS used,
+       COALESCE((SELECT total_bytes FROM modules WHERE slug = ?), 0) +
+       COALESCE((SELECT reserved_bytes FROM upload_locks WHERE slug = ?), 0) AS replacing`,
+  )
+    .bind(payload.slug, payload.slug)
+    .first<{ used: number; replacing: number }>();
+  if (!usage || !Number.isSafeInteger(usage.used) || !Number.isSafeInteger(usage.replacing)) {
+    return json(
+      { error: '容量核算不可用，索引未更新（成本保护）', code: 'USAGE_UNAVAILABLE' },
+      503,
+    );
+  }
+  const projected = projectedUsage(
+    usage.used,
+    usage.replacing,
+    actual.actualTotalBytes,
+  );
+  if (!Number.isSafeInteger(payload.bucketCapBytes) || payload.bucketCapBytes <= 0) {
+    return json(
+      { error: '容量闸门配置不可信，索引未更新', code: 'INVALID_COST_TOKEN' },
+      503,
+    );
+  }
+  if (exceedsBucketCap(projected, payload.bucketCapBytes)) {
+    return json(
+      {
+        error: '累计容量已超过 R2 免费额度闸门，索引未更新（对象已写入，请到 R2 Dashboard 清理）',
+        code: 'BUCKET_CAP_EXCEEDED',
+        details: [`预计累计 ${(projected / 1024 / 1024 / 1024).toFixed(2)} GB`],
+      },
+      413,
+    );
+  }
+
   const m = payload.meta;
   await env.DB.prepare(
     `INSERT INTO modules
-       (slug, title, system, kind, summary, cover, status, console_file, mindmap_file, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+       (slug, title, system, kind, summary, cover, status, console_file, mindmap_file,
+        total_bytes, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
      ON CONFLICT(slug) DO UPDATE SET
        title = excluded.title, system = excluded.system, kind = excluded.kind,
        summary = excluded.summary, cover = excluded.cover, status = excluded.status,
        console_file = excluded.console_file, mindmap_file = excluded.mindmap_file,
-       updated_at = datetime('now')`,
+       total_bytes = excluded.total_bytes, updated_at = datetime('now')`,
   )
-    .bind(payload.slug, m.title, m.system, m.kind, m.summary, m.cover, m.status, m.consoleFile, m.mindmapFile)
+    .bind(
+      payload.slug,
+      m.title,
+      m.system,
+      m.kind,
+      m.summary,
+      m.cover,
+      m.status,
+      m.consoleFile,
+      m.mindmapFile,
+      actual.actualTotalBytes,
+    )
     .run();
 
   const row = await env.DB.prepare(
-    'SELECT slug, status, console_file, mindmap_file FROM modules WHERE slug = ?',
+    'SELECT slug, status, console_file, mindmap_file, total_bytes FROM modules WHERE slug = ?',
   )
     .bind(payload.slug)
-    .first<Pick<ModuleRow, 'slug' | 'status' | 'console_file' | 'mindmap_file'>>();
+    .first<Pick<ModuleRow, 'slug' | 'status' | 'console_file' | 'mindmap_file' | 'total_bytes'>>();
 
   if (
     !row ||
     row.status !== m.status ||
     row.console_file !== m.consoleFile ||
-    row.mindmap_file !== m.mindmapFile
+    row.mindmap_file !== m.mindmapFile ||
+    row.total_bytes !== actual.actualTotalBytes
   ) {
     return json({ error: '索引写入校验失败，未确认上架', code: 'INDEX_VERIFY_FAILED' }, 500);
   }
+
+  // 索引确认无误后才释放预留量；删除失败也只是多算一点（fail-closed 方向），不阻断上架。
+  await env.DB.prepare('DELETE FROM upload_locks WHERE slug = ?').bind(payload.slug).run();
 
   return json({
     ok: true,
@@ -232,6 +401,7 @@ async function handleFinalize(request: Request, env: Env): Promise<Response> {
     status: m.status,
     verified: true,
     objectCount: payload.keys.length,
+    totalBytes: actual.actualTotalBytes,
   });
 }
 

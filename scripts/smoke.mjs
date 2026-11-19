@@ -3,6 +3,9 @@
 // 真机才能验的部分（Access / 预签名 PUT / R2 CORS / 浏览器渲染 / 大包直传）在末尾明确列出。
 import assert from 'node:assert/strict';
 import { File } from 'node:buffer';
+import { readFileSync, readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { zipSync, unzipSync, strFromU8 } from 'fflate';
 import { importXMindFile, convertXmindToMindElixir } from '@mind-elixir/import-xmind';
 import { inspectXmind } from '../shared/xmind.js';
@@ -14,7 +17,18 @@ import {
   isUnsafeRelativePath,
 } from '../shared/paths.js';
 import { extractReferences, buildAvailableSet, findMissingDeps } from '../shared/deps.js';
+import {
+  COST_GUARD_DEFAULTS,
+  readCostGuards,
+  isWritesEnabled,
+  assertCostToken,
+  validateSizes,
+  projectedUsage,
+  exceedsBucketCap,
+  verifyActualBytes,
+} from '../shared/cost.js';
 
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const enc = new TextEncoder();
 const S = (s) => enc.encode(s);
 const results = [];
@@ -213,12 +227,99 @@ check('损坏 / 占位 / 非 xmind 文件 → 可见拒绝，不留空图', () =
   assert.throws(() => unzipSync(new Uint8Array([1, 2, 3, 4])));
 });
 
+// ---------- 5. 成本闸门（B1-3）：R2 无原生硬账单上限，写口自己卡 ----------
+const MB_UNIT = 1024 * 1024;
+const GB_UNIT = 1024 * MB_UNIT;
+const costSizes = {
+  '02_DM主控台.html': 2 * MB_UNIT,
+  '剧情导图.xmind': 1 * MB_UNIT,
+  '原文.html': 1 * MB_UNIT,
+  'source/第二章.html': 1 * MB_UNIT,
+  'assets/maps/地图 01.png': 3 * MB_UNIT,
+  'assets/maps/深层/隐藏地图#2.png': 4 * MB_UNIT,
+  'assets/cover.png': 2 * MB_UNIT,
+  '未被引用的废图.png': 1 * MB_UNIT,
+  'assets/app.js': 1 * MB_UNIT,
+};
+const costPlan = buildUploadPlan(meta.slug, consoleFile, mindmapFile, fullTree);
+check('成本闸门：三区输入 → 体积声明 → 单文件/整条目/文件数校验通过', () => {
+  const r = validateSizes({ sizes: costSizes, plan: costPlan, guards: COST_GUARD_DEFAULTS });
+  assert.deepEqual(r.errors, []);
+  assert.equal(r.declaredTotalBytes, 16 * MB_UNIT);
+});
+check('成本闸门：D1 累计容量锁把用量压在 8GB 内；同 slug 修订不重复计', () => {
+  const projected = projectedUsage(7.9 * GB_UNIT, 0.5 * GB_UNIT, 0.2 * GB_UNIT);
+  assert.equal(exceedsBucketCap(projected, COST_GUARD_DEFAULTS.bucketCapBytes), false);
+  assert.equal(exceedsBucketCap(projectedUsage(7.9 * GB_UNIT, 0, 0.2 * GB_UNIT), 8 * GB_UNIT), true);
+});
+check('先红后绿：把闸门调大（或声明少报）后，同一份超限输入会被放行 / 被 finalize 抓到', () => {
+  const loose = readCostGuards({ BUCKET_CAP_GB: '10' });
+  assert.equal(exceedsBucketCap(8.5 * GB_UNIT, loose.bucketCapBytes), false);
+  const lying = verifyActualBytes({
+    actualSizes: [2 * MB_UNIT, 1 * MB_UNIT, 250 * MB_UNIT],
+    declaredTotalBytes: 3 * MB_UNIT,
+  });
+  assert.ok(lying.errors.length >= 2, '真实 size 复核必须拦住少报声明');
+});
+check('成本闸门：单文件超 50MB / 整条目超 200MB → 拒上架', () => {
+  const big = { ...costSizes, 'assets/cover.png': 51 * MB_UNIT };
+  assert.ok(validateSizes({ sizes: big, plan: costPlan }).errors.some((e) => e.includes('单文件')));
+  const huge = { ...costSizes, 'assets/cover.png': 250 * MB_UNIT };
+  assert.ok(validateSizes({ sizes: huge, plan: costPlan }).errors.some((e) => e.includes('整条目')));
+});
+check('一键熔断：WRITES_ENABLED="0" 关写口，缺省启用', () => {
+  assert.equal(isWritesEnabled({}), true);
+  assert.equal(isWritesEnabled({ WRITES_ENABLED: '0' }), false);
+});
+check('fail-closed：旧版令牌 / 不可信用量 / 不可信 size 一律拒，不静默放行', () => {
+  assert.ok(assertCostToken({ keys: [], exp: 1 }).length >= 2);
+  assert.equal(exceedsBucketCap(projectedUsage(undefined, 0, 1 * MB_UNIT), 8 * GB_UNIT), true);
+  assert.ok(
+    verifyActualBytes({ actualSizes: [1 * MB_UNIT, undefined], declaredTotalBytes: 2 * MB_UNIT })
+      .errors.length >= 1,
+  );
+});
+check('预留量只增不减：放弃上传留下的预留会提前拦死容量锁', () => {
+  const used = 7.5 * GB_UNIT;
+  const reserved = 0.6 * GB_UNIT;
+  assert.equal(exceedsBucketCap(projectedUsage(used + reserved, 0, 0.1 * GB_UNIT), 8 * GB_UNIT), true);
+  assert.equal(exceedsBucketCap(projectedUsage(used, 0, 0.1 * GB_UNIT), 8 * GB_UNIT), false);
+});
+check('反模式静态审计：成本机制不含 cron / alarm / setInterval / GraphQL / list() 遍历', () => {
+  const dirs = [join(ROOT, 'worker/src'), join(ROOT, 'shared'), join(ROOT, 'web/assets'), join(ROOT, 'scripts')];
+  const forbidden = /setInterval\(|async scheduled\(|Cron Trigger|\balarm\b|GraphQL|\.list\(/;
+  const hits = [];
+  for (const dir of dirs) {
+    for (const name of readdirSync(dir)) {
+      if (!/\.(ts|js|mjs)$/.test(name)) continue;
+      // 审计脚本自身含这些关键字的字面量；且它只在沙盒跑，不部署，不参与成本路径
+      if (name === 'smoke.mjs') continue;
+      const text = readFileSync(join(dir, name), 'utf8');
+      // 只把「代码行」算命中；注释里说明这些词是允许的
+      for (const line of text.split('\n')) {
+        const code = line.trim();
+        if (code.startsWith('//') || code.startsWith('*') || code.startsWith('/*')) continue;
+        if (forbidden.test(code)) hits.push(`${name}: ${code.slice(0, 80)}`);
+      }
+    }
+  }
+  assert.deepEqual(hits, [], `发现定时/遍历反模式：\n${hits.join('\n')}`);
+});
+check('迁移与部署指引都包含 upload_locks 预留量表（纯点击建表不漏项）', () => {
+  const sql = readFileSync(join(ROOT, 'migrations/0001_init.sql'), 'utf8');
+  const guide = readFileSync(join(ROOT, 'docs/部署指引_纯点击.md'), 'utf8');
+  assert.ok(sql.includes('CREATE TABLE IF NOT EXISTS upload_locks'));
+  assert.ok(sql.includes('total_bytes'));
+  assert.ok(guide.includes('CREATE TABLE IF NOT EXISTS upload_locks'));
+  assert.ok(guide.includes('WRITES_ENABLED'));
+});
+
 // ---------- 汇总 ----------
 console.log(`\n=== 通过 ${results.length} 项断言 ===`);
 console.log(`
 沙盒已验：
-  · 30 条单元测试（契约 / 路径 / 依赖解析 / xmind 格式判定）
-  · 本冒烟 ${results.length} 项：三区输入 → 剥顶层 → R2 key 格局 → 依赖逐项断言 → 两代 xmind 出图
+  · 45 条单元测试（契约 / 路径 / 依赖解析 / xmind 格式判定 / 成本闸门 / fail-closed / 一键熔断）
+  · 本冒烟 ${results.length} 项：三区输入 → 剥顶层 → R2 key 格局 → 依赖逐项断言 → 两代 xmind 出图 → 成本闸门 → 反模式静态审计
   · Worker TypeScript 类型检查、Worker bundle 体积、前端 vendor 产物语法
 
 只能真机 / 用户本地验（见档案 §0.6）：
@@ -227,4 +328,5 @@ console.log(`
   · 浏览器内 mind-elixir 实际渲染 / 多 sheet 切换 / 中文节点保真度
   · 真实两代 .xmind 样本、加密损坏文件的下载兜底、预览库首屏体积
   · D1 写入后浏览端卡片 +1、draft 隔离、单次上架不触发构建
+  · 成本控制真机项：Cache Rules 命中是否真的不回源、WAF 限流/防盗链、Billing 告警、容量闸门 413 回执、一键熔断 503、预留量累积行为
 `);

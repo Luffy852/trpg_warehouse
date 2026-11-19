@@ -16,6 +16,13 @@ export interface Env {
   CF_ACCESS_AUD: string;
   UPLOAD_TOKEN_SECRET: string;
   PRESIGN_EXPIRES?: string;
+  /** 成本闸门阈值（可选，缺省用 shared/cost.js 默认值）；在 GitHub 网页编辑 wrangler.toml 即可调 */
+  MAX_SINGLE_FILE_MB?: string;
+  MAX_ENTRY_MB?: string;
+  MAX_FILES_PER_ENTRY?: string;
+  BUCKET_CAP_GB?: string;
+  /** 一键熔断：设 "0" 后所有写口立刻 503；缺省 "1"。纯点击改配置即可 */
+  WRITES_ENABLED?: string;
 }
 
 export interface ModuleRow {
@@ -29,4 +36,6 @@ export interface ModuleRow {
   console_file: string;
   mindmap_file: string;
   created_at: string;
+  /** 该条目实际占用 R2 的字节数，由 finalize 用 head().size 累加；用于 8GB 容量锁 */
+  total_bytes: number;
 }

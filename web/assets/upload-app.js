@@ -6,8 +6,10 @@ import {
   stripTopFolder,
   isUnsafeRelativePath,
   findDuplicateNames,
+  buildUploadPlan,
 } from '../../shared/paths.js';
 import { extractReferences, buildAvailableSet, findMissingDeps } from '../../shared/deps.js';
+import { COST_GUARD_DEFAULTS, validateSizes } from '../../shared/cost.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -85,6 +87,19 @@ dropZone.addEventListener('drop', async (event) => {
   setTree([...treeFiles, ...out]);
 });
 
+// 体积声明随 prepare 送给 Worker；finalize 会用 R2 head().size 复核，少报会被抓到。
+function collectSizes(meta, rels) {
+  const sizes = {};
+  const consoleFile = $('consoleFile').files[0];
+  const mindmapFile = $('mindmapFile').files[0];
+  if (consoleFile) sizes[meta.consoleFile] = consoleFile.size;
+  if (mindmapFile) sizes[meta.mindmapFile] = mindmapFile.size;
+  for (const x of treeFiles) {
+    if (!(x.relativePath in sizes)) sizes[x.relativePath] = x.file.size;
+  }
+  return sizes;
+}
+
 function readForm() {
   const title = $('title').value.trim();
   return {
@@ -125,7 +140,12 @@ async function precheck(meta) {
     );
     for (const name of missing) errors.push(`主控台引用的本地文件缺失：${name}`);
   }
-  return { errors, refs, rels };
+
+  const sizes = collectSizes(meta, rels);
+  // 前端用默认阈值提前反馈；若你在 wrangler.toml 改过阈值，以 Worker 权威校验为准。
+  const plan = buildUploadPlan(meta.slug || '_', meta.consoleFile, meta.mindmapFile, rels);
+  errors.push(...validateSizes({ sizes, plan, guards: COST_GUARD_DEFAULTS }).errors);
+  return { errors, refs, rels, sizes };
 }
 
 async function fetchJSON(url) {
@@ -198,7 +218,7 @@ async function submit() {
   setProgress(0, 1, '本地预检…');
   try {
     const meta = readForm();
-    const { errors, refs, rels } = await precheck(meta);
+    const { errors, refs, rels, sizes } = await precheck(meta);
     if (errors.length) return showBad('本地预检未通过，未发起上架', errors);
 
     const consoleHtml = await $('consoleFile').files[0].text();
@@ -211,6 +231,7 @@ async function submit() {
       ...meta,
       consoleHtml,
       relativePaths: rels,
+      sizes,
     });
     if (!prep.httpOk) {
       return showBad('Worker 拒绝上架', [prep.error ?? `HTTP ${prep.httpStatus}`, ...(prep.details ?? [])]);
@@ -257,7 +278,7 @@ async function submit() {
       [
         `主控台实际引用 ${refs.local.length} 个本地资源，均已在包内`,
         `绝对外链 ${refs.external.length} 个保持原样，不纳入存在性断言`,
-        `已写入对象 ${fin.objectCount} 个，D1 写后读回校验通过`,
+        `已写入对象 ${fin.objectCount} 个 / ${((fin.totalBytes ?? 0) / 1024 / 1024).toFixed(1)} MB，D1 写后读回校验通过`,
         ...(refs.rootRelative.length
           ? [`⚠ 检出根相对路径 ${refs.rootRelative.join('、')}，属 §0.6 未验风险，请真机确认是否可达`]
           : []),

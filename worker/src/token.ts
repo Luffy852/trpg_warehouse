@@ -15,6 +15,10 @@ export interface UploadTokenPayload {
     mindmapFile: string;
   };
   keys: string[];
+  /** prepare 时声明的总体积，finalize 用 head().size 复核（防少报绕过闸门） */
+  declaredTotalBytes: number;
+  /** prepare 时的桶容量闸门快照，避免两次请求之间改配置绕过 */
+  bucketCapBytes: number;
   exp: number;
 }
 
