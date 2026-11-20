@@ -33,7 +33,7 @@ run_worker_first = [
 [[d1_databases]]
 binding = "DB"
 database_name = "trpg-warehouse-db"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+database_id = "fcfdf05f-1243-4589-921b-df0a4ac19492"
 migrations_dir = "./migrations"
 
 # ② bucket_name 必须与 Dashboard 里创建的桶名完全一致：trpg-warehouse-assets
@@ -45,14 +45,14 @@ bucket_name = "trpg-warehouse-assets"
 # ③ R2 公开读基址（不带末尾斜杠）：R2 → bucket → Settings → Custom Domains 复制。
 #    预览页与主控台内链都从这里拼；必须用自定义域，不要用 r2.dev 开发域
 #    （官方明确 r2.dev 不支持 WAF / 缓存 / 访问控制，会让部署指引第 8 步的成本控制全部失效）。
-R2_PUBLIC_BASE_URL = "REPLACE_WITH_R2_PUBLIC_BASE_URL"
+R2_PUBLIC_BASE_URL = "https://warehouseasset.finewinginnovation.cn"
 R2_BUCKET = "trpg-warehouse-assets"
 # ④ Account ID：Cloudflare Dashboard 右侧栏 / 账户首页复制那串 32 位十六进制
-R2_ACCOUNT_ID = "REPLACE_WITH_CLOUDFLARE_ACCOUNT_ID"
+R2_ACCOUNT_ID = "70e37bf4d154d01d8d96cd83b6af2700"
 # ⑤ Team domain：Zero Trust → Settings → Team domain（形如 xxxx.cloudflareaccess.com）
 # ⑥ AUD：Zero Trust → Access → Applications → 应用 Overview → Application Audience (AUD) Tag
-CF_ACCESS_TEAM_DOMAIN = "REPLACE_WITH_TEAM_DOMAIN"
-CF_ACCESS_AUD = "REPLACE_WITH_ACCESS_AUD"
+CF_ACCESS_TEAM_DOMAIN = "finewinginnovation.cloudflareaccess.com"
+CF_ACCESS_AUD = "6a69c26ebfd3c7306c8d299d2db653f4d286e95df4be54da9655af9f8711dc06"
 PRESIGN_EXPIRES = "3600"
 
 # 成本闸门（B1-3）：R2 没有原生硬性账单上限，Worker 在写口自己卡体积 / 数量 / 累计容量。
@@ -76,3 +76,10 @@ WRITES_ENABLED = "1"
 #   UPLOAD_TOKEN_SECRET    prepare→finalize 一次性令牌的 HMAC 密钥（随机长字符串）
 # 注意：不要用 Worker → Settings → Domains & Routes 的「Enable Cloudflare Access」一键开关，
 #       那个会把整个站点（含公开浏览端）都锁上；本项目只锁 /upload* 与 /api/upload*。
+
+# ★ 首次部署即绑定正式站点域名（本版新增）
+#   部署时会自动创建 DNS 记录并签发证书，不必再去 Dashboard 手点；
+#   写在这里才符合「仓库配置是唯一真值」，下一次 Git 部署不会把它冲掉。
+[[routes]]
+pattern = "warehouse.finewinginnovation.cn"
+custom_domain = true
