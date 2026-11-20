@@ -2,11 +2,11 @@
 
 公开只读的网页版 TRPG 模组库。上传者在受 Access 保护的 `/upload` 提交**主控台单文件 + `.xmind` 单文件 + 文件夹拖拽资源树**，浏览端即时上架；访客点卡片进条目页，并列拿到「思维导图 / 主控台」两个入口，思维导图在**浏览器内直接预览**，主控台原样托管、内部链接自然取到对应文件。
 
-> **当前参考档案版本：v3**（`docs/项目档案_trpg-warehouse_v3.md`）。`docs/` 内会累积多份历史档案，属正常，不要删除；S1 完成后由用户手动归档。
-> 本仓库是 **BC · B1** 首次开发产物，按《项目档案_trpg-warehouse_v3.md》§0 / §1 / §3.2 实现。
+> **当前参考档案版本：v4**（`docs/项目档案_trpg-warehouse_v4.md`）。`docs/` 内会累积多份历史档案，属正常，不要删除；S1 完成后由用户手动归档。
+> 本仓库是 **BC · B1** 首次开发产物，按《项目档案_trpg-warehouse_v4.md》§0 / §1 / §3.2 实现。
 > **部署方式是纯点击（GitHub 网页 + Cloudflare Dashboard + Workers Builds），不需要本地命令行**；步骤见 [`docs/部署指引_纯点击.md`](docs/部署指引_纯点击.md)。
 > **成本控制（B1-3）**：R2 没有原生硬性账单上限，项目用「写口体积/容量闸门（含预留量）+ CDN 缓存/WAF + 账单告警 + **一键熔断**」兜底；原则是 **fail-closed（宁停不烧钱）**，且成本机制本身零定时/高频遍历。第三方建议的逐条核实与取舍见部署指引**附录 A**与 8.8 节，第 8 步是必做项。
-> 代码已通过 45 条单测 / 23 项离线冒烟 / TypeScript 类型检查 / bundle 486 KB；**Cloudflare 尚未部署，真实样本、成本控制真机项与验收仍待完成**。
+> 代码已通过 45 条单测 / 23 项离线冒烟 / TypeScript 类型检查 / bundle 486 KB（**本轮收尾未改代码**）。**Cloudflare 首次部署已成功上线**（`warehouse.finewinginnovation.cn` / `warehouseasset.finewinginnovation.cn`）；W1 验收进行中：#3 / #4 已通过、#5 受阻于一个已知代码缺陷、其余待复跑。真实样本、成本控制真机项属 W2，仍待完成。
 
 ---
 
@@ -51,7 +51,7 @@
 | `r2-cors.json` | R2 CORS 模板：粘贴到 Dashboard 的 CORS Policy JSON tab，同时放行 `GET` 与 `PUT` |
 | `scripts/build-web.mjs` `scripts/smoke.mjs` | 前端打包 / B1 离线冒烟（含两代 xmind 合成样本） |
 | `docs/部署指引_纯点击.md` | **部署步骤唯一出处**（网页点选，零命令行） |
-| **`docs/项目档案_trpg-warehouse_v3.md`** | **当前参考版本 v3 ＝ 项目唯一信息载体**。`docs/` 里 v2 等旧版**并存、不删、不作依据**；S1 完成后由用户手动归入 `docs/archive/`。**§0.11 是每个新对话开场必读的「硬盘体系」规程** |
+| **`docs/项目档案_trpg-warehouse_v4.md`** | **当前参考版本 v4 ＝ 项目唯一信息载体**。`docs/` 里 v1 / v2 / v3 等旧版**并存、不删、不作依据**；S1 完成后由用户手动归入 `docs/archive/`。**§0.11 是每个新对话开场必读的「硬盘体系」规程** |
 
 ---
 
@@ -61,13 +61,13 @@
 
 **部署全程在浏览器里完成**：GitHub 网页编辑 + Cloudflare Dashboard / Zero Trust 点选 + Workers Builds 自动构建。**不需要 clone、不需要装 Node、不需要任何 `npm` / `wrangler` / `git` 命令。**
 
-> 📄 **详细步骤只写在 [`docs/部署指引_纯点击.md`](docs/部署指引_纯点击.md)**：值清单、每一步点哪里、粘贴哪段 SQL / JSON、排错表、纯点击验收清单都在那里。本节只给路线图，避免两份说明不一致。
+> 📄 **详细步骤只写在 [`docs/部署指引_纯点击.md`](docs/部署指引_纯点击.md)**：值清单、每一步点哪里、粘贴哪段 SQL / JSON、排错表、纯点击验收清单都在那里；**该指引已于 2026-11-20 按首次部署真机实测全面修订**（Zero Trust 新界面、自定义域兜底、Free 档限制、已知问题与当前进度）。本节只给路线图，避免两份说明不一致。
 
 ### 3.1 路线图
 
 | 阶段 | 在哪个网页 | 做什么 |
 |---|---|---|
-| 0 | GitHub | 上传 `trpg-warehouse_v3补丁包.zip`（**只增不删**：整包拖入即可，代码文件同名 modified 正常；档案按版本号新增，**不用删旧版、不用管覆盖**） |
+| 0 | GitHub | 上传 `trpg-warehouse_v4文档迭代包.zip`（**只增不删**：整包拖入即可；档案按版本号新增 v4，**不用删旧版、不用管覆盖**；`docs/部署指引_纯点击.md` 与 `README.md` 为同名替换） |
 | 1 | — | 备好「值清单」（6 个配置值 + 3 个 Secret） |
 | 2 | Cloudflare Dashboard | 建 D1 `trpg-warehouse-db`、R2 `trpg-warehouse-assets`、**R2 自定义域**、R2 S3 API token；停用 r2.dev |
 | 3 | Zero Trust | 设 team domain + 建 Self-hosted Access 应用（`/upload*`、`/api/upload*` 两条 path） |
@@ -76,7 +76,7 @@
 | 6 | Worker → Settings | 加 3 个 Secret → Deploy |
 | 7 | D1 → Studio | 粘贴建表 SQL（**含 `total_bytes` 与 `upload_locks`**）→ Run all statements |
 | 8 | R2 / zone / Billing | CORS + **Cache Rules / WAF 限流 / 防盗链 / 生命周期 / 账单告警**（成本控制闭环） |
-| 9 | Zero Trust | 校准 Access 应用域名（AUD 不变） |
+| 9 | Zero Trust + Worker Settings | **复核** Access 应用域名 / 自定义域仍在 / 绑定与 Secret 仍在（AUD 不变） |
 | 10 | 浏览器 | 按验收清单点一遍（含成本控制 6 项） |
 
 ### 3.2 五条最容易踩的坑
