@@ -6,6 +6,26 @@
 
 const REF_ATTR = /\b(?:href|src|poster|data-src)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
 
+// 扫描前只保留「真正的 HTML 标签」，把会拼页面的脚本体与注释挖空。
+// 为什么：成品主控台的 <script> 里大量用模板字面量拼 DOM，例如
+//   `<img class="thumb" src="${m[mapVer]}">`、`el.src=m[ver];`
+// `${...}` / `m[ver]` 是运行时才有的值，不是文件名；若被 REF_ATTR 当成依赖，
+// 上架会误报 MISSING_DEPS（W1 #5 真实缺陷，完整样板实测 local 5 → 1）。
+// 关键约束：<script> 的**开标签必须保留** —— 开标签上的 src 是真实静态引用
+// （现有单测与冒烟都断言要抓到 <script src="assets/app.js">）。
+// <template> 不在挖空范围：它内部是真实静态 HTML，克隆后引用照样生效。
+function stripNonHtmlBodies(html) {
+  const source = String(html ?? '').replace(/<!--[\s\S]*?-->/g, ' ');
+  // 没有任何闭合 script 时，浏览器也会把其后全部当脚本，一并挖到末尾
+  if (!/<\/script\s*>/i.test(source)) {
+    return source.replace(/(<script\b[^>]*>)[\s\S]*$/i, (_m, open) => `${open}`);
+  }
+  return source.replace(
+    /(<script\b[^>]*>)[\s\S]*?(<\/script\s*>)/gi,
+    (_m, open, close) => `${open} ${close}`,
+  );
+}
+
 function normalizeRefPath(path) {
   let decoded = path;
   try {
@@ -33,10 +53,15 @@ function dedupe(list) {
 
 export function extractReferences(html) {
   const result = { local: [], external: [], rootRelative: [], ignored: [] };
-  const source = String(html ?? '');
+  const source = stripNonHtmlBodies(html);
   for (const match of source.matchAll(REF_ATTR)) {
     const value = (match[1] ?? match[2] ?? match[3] ?? '').trim();
     if (!value) {
+      result.ignored.push(value);
+      continue;
+    }
+    // 兜底：即便出现在非 script 区域，未求值的模板占位符也不是文件名
+    if (value.includes('${')) {
       result.ignored.push(value);
       continue;
     }

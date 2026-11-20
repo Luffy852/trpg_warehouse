@@ -30,6 +30,15 @@ function setTree(files) {
     : '尚未选择资源树。';
 }
 
+// 「清空已选」：只清资源树（拖拽 + 按钮选择共用同一份 treeFiles），不动两个单文件区。
+// 配合下面的同名拒绝文案：撞了重名可以一键重来，改选不含两单文件的文件夹即可。
+function clearTree() {
+  treeFiles = [];
+  $('treeInput').value = '';
+  $('treeSummary').textContent = '尚未选择资源树。';
+}
+$('clearTreeBtn').addEventListener('click', clearTree);
+
 // webkitdirectory：webkitRelativePath 形如「顶层文件夹/子/文件」，剥掉第一段
 $('treeInput').addEventListener('change', (event) => {
   const list = Array.from(event.target.files || []);
@@ -129,7 +138,15 @@ async function precheck(meta) {
   for (const p of [meta.consoleFile, meta.mindmapFile, ...rels]) {
     if (p && isUnsafeRelativePath(p)) errors.push(`路径不安全：${p}`);
   }
-  errors.push(...findDuplicateNames(meta.consoleFile, meta.mindmapFile, rels));
+  // 按乙：口径不变（重名即拒、不静默覆盖），只把拒绝信息写成能照着做的话 + 一键重来。
+  const duplicates = findDuplicateNames(meta.consoleFile, meta.mindmapFile, rels);
+  if (duplicates.length) {
+    errors.push(...duplicates);
+    errors.push(
+      '处理方式：主控台与思维导图已在上方两区单独上传，资源树里不要再放同名文件；' +
+      '点「清空已选资源树」后改选不含这两个文件的文件夹即可。同名一律拒绝，不会自动覆盖。',
+    );
+  }
 
   let refs = { local: [], external: [], rootRelative: [] };
   if ($('consoleFile').files[0]) {

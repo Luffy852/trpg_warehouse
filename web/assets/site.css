@@ -143,6 +143,14 @@ main { max-width: 1080px; margin: 0 auto; padding: 28px 20px 56px; }
 }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 
+/* 资源树摘要 + 清空按钮：次级动作，不与「校验并上架」主按钮抢视觉 */
+.tree-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 4px; }
+.tree-actions .hint { margin: 0; flex: 1 1 240px; }
+.tree-actions .btn {
+  padding: 7px 14px; font-size: 12px;
+  background: var(--panel-2); color: var(--ink); border: 1px solid var(--line);
+}
+
 .progress { margin: 16px 0; color: var(--muted); font-size: 13px; }
 .progress-bar { height: 6px; background: var(--panel-2); border-radius: 999px; overflow: hidden; margin-top: 8px; }
 .progress-bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
