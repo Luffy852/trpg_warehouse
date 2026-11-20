@@ -7,6 +7,7 @@ import {
   findDuplicateNames,
   buildUploadPlan,
   encodeKeyPath,
+  skipSingleFileDuplicates,
 } from './paths.js';
 
 test('stripTopFolder：目录树剥掉所选顶层文件夹名，完整保留子目录', () => {
@@ -63,4 +64,53 @@ test('buildUploadPlan：两单文件平铺条目根，树按原结构挂在根�
     'modules/frozen-malice/assets/a.png',
     'modules/frozen-malice/assets/maps/b.png',
   ]);
+});
+
+// ---------- W1 #5 后续 / 包①b：单文件同名显式跳过 ----------
+
+test('skipSingleFileDuplicates：只剔除与两单文件完全同名的资源树项，返回 kept / skipped', () => {
+  const rels = [
+    '02_DM主控台.html',
+    '01_全局备团思维导图.xmind',
+    'maps/map1_dm.jpg',
+    '模组原文/魔兽世界 - 死亡矿井.html',
+  ];
+  const { kept, skipped } = skipSingleFileDuplicates(
+    '02_DM主控台.html', '01_全局备团思维导图.xmind', rels,
+  );
+  assert.deepEqual(skipped.sort(), ['01_全局备团思维导图.xmind', '02_DM主控台.html'].sort());
+  assert.deepEqual(kept, ['maps/map1_dm.jpg', '模组原文/魔兽世界 - 死亡矿井.html']);
+});
+
+test('skipSingleFileDuplicates：只按完整 relativePath 匹配，带子目录的同名文件不被误剔', () => {
+  const { kept, skipped } = skipSingleFileDuplicates(
+    '02_DM主控台.html', '导图.xmind',
+    ['assets/02_DM主控台.html', '02_DM主控台.html', 'assets/导图.xmind'],
+  );
+  assert.deepEqual(skipped, ['02_DM主控台.html']);
+  assert.deepEqual(kept, ['assets/02_DM主控台.html', 'assets/导图.xmind']);
+});
+
+test('防误伤：跳过之后 findDuplicateNames 仍拒绝树内自身重名（同一文件夹拖两次）', () => {
+  const { kept } = skipSingleFileDuplicates(
+    '02_DM主控台.html', '导图.xmind',
+    ['02_DM主控台.html', 'maps/a.png', 'maps/a.png'],
+  );
+  assert.deepEqual(kept, ['maps/a.png', 'maps/a.png']);
+  assert.ok(
+    findDuplicateNames('02_DM主控台.html', '导图.xmind', kept)
+      .some((x) => x.includes('拖拽树内重名')),
+  );
+});
+
+test('防误伤：跳过之后 buildUploadPlan 无重复 relativePath，两单文件仍平铺条目根', () => {
+  const { kept } = skipSingleFileDuplicates(
+    '02_DM主控台.html', '导图.xmind',
+    ['02_DM主控台.html', '导图.xmind', 'maps/a.png', '模组原文/原文.html'],
+  );
+  const plan = buildUploadPlan('wow-deadmines', '02_DM主控台.html', '导图.xmind', kept);
+  assert.deepEqual(plan.map((p) => p.relativePath), [
+    '02_DM主控台.html', '导图.xmind', 'maps/a.png', '模组原文/原文.html',
+  ]);
+  assert.equal(new Set(plan.map((p) => p.relativePath)).size, plan.length);
 });

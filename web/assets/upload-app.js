@@ -7,6 +7,7 @@ import {
   isUnsafeRelativePath,
   findDuplicateNames,
   buildUploadPlan,
+  skipSingleFileDuplicates,
 } from '../../shared/paths.js';
 import { extractReferences, buildAvailableSet, findMissingDeps } from '../../shared/deps.js';
 import { COST_GUARD_DEFAULTS, validateSizes } from '../../shared/cost.js';
@@ -22,12 +23,44 @@ function escapeHtml(value) {
   })[c]);
 }
 
+// ①②区可能后选 / 改选，所以每次都按「当前」两个单文件重算，不把剔除结果写死在 setTree。
+function currentSingleNames() {
+  return {
+    consoleFile: $('consoleFile').files[0]?.name ?? '',
+    mindmapFile: $('mindmapFile').files[0]?.name ?? '',
+  };
+}
+
+// 包①b：只跳过与两单文件完全同名的资源树项。返回剔除后的 treeFiles 供下游全链使用
+// （sizes / 依赖断言 / buildUploadPlan / relativePaths / fileMap / prepare 请求）。
+function skippedNames(files) {
+  const { consoleFile, mindmapFile } = currentSingleNames();
+  return skipSingleFileDuplicates(
+    consoleFile, mindmapFile, files.map((x) => x.relativePath),
+  ).skipped;
+}
+
+function effectiveTree() {
+  const skip = new Set(skippedNames(treeFiles));
+  return treeFiles.filter((x) => !skip.has(x.relativePath));
+}
+
+// 显式回执：树摘要当场写明「跳过了哪几个」，不静默丢弃。
+function renderTreeSummary() {
+  const names = treeFiles.slice(0, 6).map((x) => x.relativePath).join('、');
+  let text = treeFiles.length
+    ? `已选择 ${treeFiles.length} 个文件：${names}${treeFiles.length > 6 ? ' …' : ''}`
+    : '尚未选择资源树。';
+  const skipped = [...new Set(skippedNames(treeFiles))];
+  if (skipped.length) {
+    text += `；已跳过 ${skipped.length} 个与 ①/② 区同名的文件：${skipped.join('、')}（以单文件区为准，不重复上传）`;
+  }
+  $('treeSummary').textContent = text;
+}
+
 function setTree(files) {
   treeFiles = files;
-  const names = files.slice(0, 6).map((x) => x.relativePath).join('、');
-  $('treeSummary').textContent = files.length
-    ? `已选择 ${files.length} 个文件：${names}${files.length > 6 ? ' …' : ''}`
-    : '尚未选择资源树。';
+  renderTreeSummary();
 }
 
 // 「清空已选」：只清资源树（拖拽 + 按钮选择共用同一份 treeFiles），不动两个单文件区。
@@ -35,9 +68,12 @@ function setTree(files) {
 function clearTree() {
   treeFiles = [];
   $('treeInput').value = '';
-  $('treeSummary').textContent = '尚未选择资源树。';
+  renderTreeSummary();
 }
 $('clearTreeBtn').addEventListener('click', clearTree);
+// ①②区改选单文件后，跳过名单随之变化，摘要立即重算。
+$('consoleFile').addEventListener('change', renderTreeSummary);
+$('mindmapFile').addEventListener('change', renderTreeSummary);
 
 // webkitdirectory：webkitRelativePath 形如「顶层文件夹/子/文件」，剥掉第一段
 $('treeInput').addEventListener('change', (event) => {
@@ -97,13 +133,14 @@ dropZone.addEventListener('drop', async (event) => {
 });
 
 // 体积声明随 prepare 送给 Worker；finalize 会用 R2 head().size 复核，少报会被抓到。
-function collectSizes(meta, rels) {
+// 传入的是剔除后的树：被跳过的冗余副本不重复计体积、也不重复 PUT。
+function collectSizes(meta, tree) {
   const sizes = {};
   const consoleFile = $('consoleFile').files[0];
   const mindmapFile = $('mindmapFile').files[0];
   if (consoleFile) sizes[meta.consoleFile] = consoleFile.size;
   if (mindmapFile) sizes[meta.mindmapFile] = mindmapFile.size;
-  for (const x of treeFiles) {
+  for (const x of tree) {
     if (!(x.relativePath in sizes)) sizes[x.relativePath] = x.file.size;
   }
   return sizes;
@@ -134,17 +171,23 @@ async function precheck(meta) {
   if (!meta.consoleFile) errors.push('请选择主控台单文件');
   if (!meta.mindmapFile) errors.push('请选择思维导图单文件');
 
-  const rels = treeFiles.map((x) => x.relativePath);
+  // 包①b：与 ①/② 区完全同名的资源树项已显式跳过（树摘要里写明），
+  // 下面所有校验都基于剔除后的树，不重复计体积、不重复 PUT。
+  const effective = effectiveTree();
+  const skipped = skippedNames(treeFiles);
+  const rels = effective.map((x) => x.relativePath);
   for (const p of [meta.consoleFile, meta.mindmapFile, ...rels]) {
     if (p && isUnsafeRelativePath(p)) errors.push(`路径不安全：${p}`);
   }
-  // 按乙：口径不变（重名即拒、不静默覆盖），只把拒绝信息写成能照着做的话 + 一键重来。
+  // 仍严格拒绝：两单文件互相同名、资源树内自身重名（同一文件夹拖两次）、路径不安全、缺依赖。
+  // findDuplicateNames 本身未改，Worker 收到的也是剔除后的 relativePaths，仍 fail-closed 兜底。
   const duplicates = findDuplicateNames(meta.consoleFile, meta.mindmapFile, rels);
   if (duplicates.length) {
     errors.push(...duplicates);
     errors.push(
-      '处理方式：主控台与思维导图已在上方两区单独上传，资源树里不要再放同名文件；' +
-      '点「清空已选资源树」后改选不含这两个文件的文件夹即可。同名一律拒绝，不会自动覆盖。',
+      '处理方式：与 ①/② 区同名的文件已自动跳过；这里剩下的是两单文件互相同名，或资源树内自身重名' +
+      '（同一文件夹可能拖了两次）。前者请改选其中一个单文件，后者点「清空已选资源树」后只选一次。' +
+      '其余同名一律拒绝，不会自动覆盖。',
     );
   }
 
@@ -158,11 +201,11 @@ async function precheck(meta) {
     for (const name of missing) errors.push(`主控台引用的本地文件缺失：${name}`);
   }
 
-  const sizes = collectSizes(meta, rels);
+  const sizes = collectSizes(meta, effective);
   // 前端用默认阈值提前反馈；若你在 wrangler.toml 改过阈值，以 Worker 权威校验为准。
   const plan = buildUploadPlan(meta.slug || '_', meta.consoleFile, meta.mindmapFile, rels);
   errors.push(...validateSizes({ sizes, plan, guards: COST_GUARD_DEFAULTS }).errors);
-  return { errors, refs, rels, sizes };
+  return { errors, refs, rels, sizes, skipped, effective };
 }
 
 async function fetchJSON(url) {
@@ -235,7 +278,7 @@ async function submit() {
   setProgress(0, 1, '本地预检…');
   try {
     const meta = readForm();
-    const { errors, refs, rels, sizes } = await precheck(meta);
+    const { errors, refs, rels, sizes, skipped, effective } = await precheck(meta);
     if (errors.length) return showBad('本地预检未通过，未发起上架', errors);
 
     const consoleHtml = await $('consoleFile').files[0].text();
@@ -257,7 +300,7 @@ async function submit() {
     const fileMap = new Map();
     fileMap.set(meta.consoleFile, $('consoleFile').files[0]);
     fileMap.set(meta.mindmapFile, $('mindmapFile').files[0]);
-    for (const x of treeFiles) {
+    for (const x of effective) {
       if (!fileMap.has(x.relativePath)) fileMap.set(x.relativePath, x.file);
     }
 
@@ -295,6 +338,9 @@ async function submit() {
       [
         `主控台实际引用 ${refs.local.length} 个本地资源，均已在包内`,
         `绝对外链 ${refs.external.length} 个保持原样，不纳入存在性断言`,
+        ...(skipped.length
+          ? [`已跳过 ${skipped.length} 个与 ①/② 区同名的资源树文件：${[...new Set(skipped)].join('、')}（以单文件区为准，不重复上传）`]
+          : []),
         `已写入对象 ${fin.objectCount} 个 / ${((fin.totalBytes ?? 0) / 1024 / 1024).toFixed(1)} MB，D1 写后读回校验通过`,
         ...(refs.rootRelative.length
           ? [`⚠ 检出根相对路径 ${refs.rootRelative.join('、')}，属 §0.6 未验风险，请真机确认是否可达`]

@@ -15,6 +15,7 @@ import {
   buildUploadPlan,
   findDuplicateNames,
   isUnsafeRelativePath,
+  skipSingleFileDuplicates,
 } from '../shared/paths.js';
 import { extractReferences, buildAvailableSet, findMissingDeps } from '../shared/deps.js';
 import {
@@ -104,6 +105,44 @@ check('无重名；两单文件同名或单文件命中拖拽树 → 拒', () =>
   assert.deepEqual(findDuplicateNames(consoleFile, mindmapFile, tree), []);
   assert.ok(findDuplicateNames('同一个.html', '同一个.html', tree).length > 0);
   assert.ok(findDuplicateNames('02_DM主控台.html', mindmapFile, ['02_DM主控台.html']).length > 0);
+});
+
+// ---------- 2b. 单文件同名显式跳过（包①b）：最外层总文件夹一次也能上传 ----------
+// 真机第二张截图：资源树里天然带着 ①②区已选的两个单文件，按「重名即拒」永远传不上去。
+const rootWithSingles = [
+  mindmapFile,
+  consoleFile,
+  'maps/map1_dm.jpg',
+  'maps/map1_player.jpg',
+  '模组原文/魔兽世界 - 死亡矿井.html',
+];
+check('单文件同名显式跳过：跳过 2 个冗余副本，保留带前缀引用，重名与缺依赖都清空', () => {
+  const { kept, skipped } = skipSingleFileDuplicates(consoleFile, mindmapFile, rootWithSingles);
+  assert.deepEqual(skipped.sort(), [mindmapFile, consoleFile].sort());
+  assert.deepEqual(kept, [
+    'maps/map1_dm.jpg',
+    'maps/map1_player.jpg',
+    '模组原文/魔兽世界 - 死亡矿井.html',
+  ]);
+  assert.deepEqual(findDuplicateNames(consoleFile, mindmapFile, kept), []);
+  const plan = buildUploadPlan(meta.slug, consoleFile, mindmapFile, kept);
+  assert.equal(plan.length, 5);
+  assert.equal(new Set(plan.map((p) => p.relativePath)).size, plan.length);
+  // 跳过之后仍能命中主控台里带子目录前缀的真实引用
+  const refs = extractReferences('<a href="模组原文/魔兽世界 - 死亡矿井.html"></a>');
+  assert.deepEqual(
+    findMissingDeps(refs, buildAvailableSet(consoleFile, mindmapFile, kept)),
+    [],
+  );
+});
+check('防误伤：跳过只针对两单文件同名，树内自身重名仍被拒绝', () => {
+  const rels = [consoleFile, 'maps/a.png', 'maps/a.png'];
+  const { kept } = skipSingleFileDuplicates(consoleFile, mindmapFile, rels);
+  assert.deepEqual(kept, ['maps/a.png', 'maps/a.png']);
+  assert.ok(
+    findDuplicateNames(consoleFile, mindmapFile, kept)
+      .some((x) => x.includes('拖拽树内重名')),
+  );
 });
 
 // ---------- 3. 按主控台实际引用逐项断言（不预设必备文件名清单） ----------
@@ -318,8 +357,8 @@ check('迁移与部署指引都包含 upload_locks 预留量表（纯点击建�
 console.log(`\n=== 通过 ${results.length} 项断言 ===`);
 console.log(`
 沙盒已验：
-  · 45 条单元测试（契约 / 路径 / 依赖解析 / xmind 格式判定 / 成本闸门 / fail-closed / 一键熔断）
-  · 本冒烟 ${results.length} 项：三区输入 → 剥顶层 → R2 key 格局 → 依赖逐项断言 → 两代 xmind 出图 → 成本闸门 → 反模式静态审计
+  · 55 条单元测试（契约 / 路径 / 依赖解析 / 单文件同名显式跳过 / xmind 格式判定 / 成本闸门 / fail-closed / 一键熔断）
+  · 本冒烟 ${results.length} 项：三区输入 → 剥顶层 → R2 key 格局 → 单文件同名显式跳过 → 依赖逐项断言 → 两代 xmind 出图 → 成本闸门 → 反模式静态审计
   · Worker TypeScript 类型检查、Worker bundle 体积、前端 vendor 产物语法
 
 只能真机 / 用户本地验（见档案 §0.6）：

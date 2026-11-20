@@ -52,3 +52,21 @@ export function buildUploadPlan(slug, consoleFile, mindmapFile, relativePaths = 
     ...relativePaths.map((rel) => ({ relativePath: rel, key: buildR2Key(slug, rel) })),
   ];
 }
+
+// 单文件同名显式跳过（W1 #5 后续 / 包①b）。
+// 背景：最自然的操作「①②区各选一个单文件 + 拖最外层总文件夹一次」时，总文件夹里
+// 天然带着这两个单文件；一律「重名即拒」会让用户永远传不上去（档案 §0.6 第 210 行
+// 登记的「设计冲突」）。这两个文件本来就是索引真值，树里那两份只是冗余副本。
+// 收窄边界：只按「完全相同的 relativePath」匹配；不做裸名回退、不改 stripTopFolder。
+// 树内自身重名 / 两单文件互相同名 / 路径不安全 / 缺依赖，仍由下游照旧拒绝。
+// 返回 skipped 供上传端显式回执，绝不静默丢弃。
+export function skipSingleFileDuplicates(consoleFile, mindmapFile, relativePaths = []) {
+  const singles = new Set([consoleFile, mindmapFile].filter(Boolean));
+  const kept = [];
+  const skipped = [];
+  for (const rel of relativePaths) {
+    if (singles.has(rel)) skipped.push(rel);
+    else kept.push(rel);
+  }
+  return { kept, skipped };
+}
