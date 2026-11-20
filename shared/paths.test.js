@@ -8,6 +8,7 @@ import {
   buildUploadPlan,
   encodeKeyPath,
   skipSingleFileDuplicates,
+  mergeCoverFile,
 } from './paths.js';
 
 test('stripTopFolder：目录树剥掉所选顶层文件夹名，完整保留子目录', () => {
@@ -113,4 +114,48 @@ test('防误伤：跳过之后 buildUploadPlan 无重复 relativePath，两单�
     '02_DM主控台.html', '导图.xmind', 'maps/a.png', '模组原文/原文.html',
   ]);
   assert.equal(new Set(plan.map((p) => p.relativePath)).size, plan.length);
+});
+
+// ---------- 包②：封面作为「新增的可选资源内容」落条目根 ----------
+
+test('mergeCoverFile：本地封面落条目根（裸文件名），不建 cover/ 子层级', () => {
+  const { paths, conflicts } = mergeCoverFile(
+    '02_DM主控台.html', '导图.xmind',
+    ['maps/a.png', '模组原文/原文.html'],
+    '死亡矿井封面.jpg',
+  );
+  assert.deepEqual(conflicts, []);
+  assert.deepEqual(paths, ['maps/a.png', '模组原文/原文.html', '死亡矿井封面.jpg']);
+  const plan = buildUploadPlan('wow-deadmines', '02_DM主控台.html', '导图.xmind', paths);
+  assert.equal(
+    plan.at(-1).key,
+    'modules/wow-deadmines/死亡矿井封面.jpg',
+  );
+  assert.ok(!plan.some((p) => p.key.includes('/cover/')));
+});
+
+test('mergeCoverFile：没选本地封面时原样返回，外链文本框路径不受影响', () => {
+  const { paths, conflicts } = mergeCoverFile(
+    '02_DM主控台.html', '导图.xmind', ['maps/a.png'], '',
+  );
+  assert.deepEqual(paths, ['maps/a.png']);
+  assert.deepEqual(conflicts, []);
+});
+
+test('mergeCoverFile：封面与两单文件或资源树内文件同名 → 显式拒绝，不静默改名/覆盖', () => {
+  const a = mergeCoverFile('02_DM主控台.html', '导图.xmind', ['maps/a.png'], '02_DM主控台.html');
+  assert.ok(a.conflicts.some((x) => x.includes('封面与单文件同名')));
+  assert.deepEqual(a.paths, ['maps/a.png']);
+  const b = mergeCoverFile('02_DM主控台.html', '导图.xmind', ['maps/a.png'], 'maps/a.png');
+  assert.ok(b.conflicts.some((x) => x.includes('封面与资源树内文件同名')));
+  assert.deepEqual(b.paths, ['maps/a.png']);
+});
+
+test('防误伤：封面是包内多余未引用文件，主控台真实引用仍能被命中', () => {
+  const { paths } = mergeCoverFile(
+    '02_DM主控台.html', '导图.xmind',
+    ['模组原文/魔兽世界 - 死亡矿井.html'], '封面.jpg',
+  );
+  assert.deepEqual(paths, ['模组原文/魔兽世界 - 死亡矿井.html', '封面.jpg']);
+  assert.equal(new Set(paths).size, paths.length);
 });

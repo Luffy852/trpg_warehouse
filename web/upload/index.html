@@ -28,7 +28,18 @@
       <div class="field"><label for="status">状态 status *</label>
         <select id="status"><option value="published">published · 立即上架</option><option value="draft">draft · 不进浏览端</option></select>
       </div>
-      <div class="field"><label for="cover">封面（可选：包内相对路径或 https 外链）</label><input id="cover" placeholder="assets/cover.png"></div>
+      <div class="field">
+        <label for="cover">封面（可选：包内相对路径或 https 外链）</label>
+        <input id="cover" placeholder="assets/cover.png">
+        <div class="cover-picker">
+          <label for="coverFile" class="cover-pick-hint">或选一张本地封面图（选中后优先于上方链接）</label>
+          <div class="cover-picker-row">
+            <input type="file" id="coverFile" accept="image/*">
+            <button type="button" id="clearCoverBtn" class="btn btn-quiet" hidden>移除本地封面</button>
+          </div>
+          <p id="coverHint" class="hint"></p>
+        </div>
+      </div>
       <div class="field" style="grid-column:1/-1"><label for="summary">简介 summary（可选）</label><textarea id="summary" placeholder="一句话简介"></textarea></div>
     </div>
   </section>

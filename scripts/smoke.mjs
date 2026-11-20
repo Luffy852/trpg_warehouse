@@ -16,6 +16,7 @@ import {
   findDuplicateNames,
   isUnsafeRelativePath,
   skipSingleFileDuplicates,
+  mergeCoverFile,
 } from '../shared/paths.js';
 import { extractReferences, buildAvailableSet, findMissingDeps } from '../shared/deps.js';
 import {
@@ -143,6 +144,38 @@ check('防误伤：跳过只针对两单文件同名，树内自身重名仍被�
     findDuplicateNames(consoleFile, mindmapFile, kept)
       .some((x) => x.includes('拖拽树内重名')),
   );
+});
+
+// ---------- 2c. 封面作为新增可选资源（包②）：落条目根、体积计入、不误拦依赖 ----------
+check('本地封面落条目根：并入上传计划与体积声明，不建 cover/ 子层级', () => {
+  // 用包内不存在的名字：与资源树内已有文件同名会被显式拒绝（见下方断言）
+  const { paths, conflicts } = mergeCoverFile(
+    consoleFile, mindmapFile, tree, '自选封面.jpg',
+  );
+  assert.deepEqual(conflicts, []);
+  const plan = buildUploadPlan(meta.slug, consoleFile, mindmapFile, paths);
+  assert.equal(plan.at(-1).key, 'modules/frozen-malice/自选封面.jpg');
+  assert.ok(!plan.some((p) => p.key.includes('/cover/')));
+  assert.equal(new Set(plan.map((p) => p.relativePath)).size, plan.length);
+  // 封面体积要进 sizes（finalize 用 R2 head().size 复核）
+  const sizes = { [consoleFile]: 100, [mindmapFile]: 100 };
+  for (const p of paths) sizes[p] = 1024;
+  assert.equal(Object.keys(sizes).length, plan.length);
+  assert.deepEqual(validateSizes({ sizes, plan, guards: COST_GUARD_DEFAULTS }).errors, []);
+});
+check('防误伤：封面是包内多余未引用文件，主控台引用逐项断言不受影响', () => {
+  const { paths } = mergeCoverFile(consoleFile, mindmapFile, tree, '封面.jpg');
+  const refs = extractReferences('<a href="原文.html"></a><img src="assets/maps/地图 01.png">');
+  assert.deepEqual(findMissingDeps(refs, buildAvailableSet(consoleFile, mindmapFile, paths)), []);
+});
+check('封面与已有文件同名 → 显式拒绝，不静默覆盖', () => {
+  const a = mergeCoverFile(consoleFile, mindmapFile, tree, consoleFile);
+  assert.ok(a.conflicts.some((x) => x.includes('封面与单文件同名')));
+  assert.deepEqual(a.paths, tree);
+  // 旧用法里 cover 可指向资源包内已有的 assets/cover.png；若又选了同名本地图，仍拒绝而非覆盖
+  const b = mergeCoverFile(consoleFile, mindmapFile, tree, 'assets/cover.png');
+  assert.ok(b.conflicts.some((x) => x.includes('封面与资源树内文件同名')));
+  assert.deepEqual(b.paths, tree);
 });
 
 // ---------- 3. 按主控台实际引用逐项断言（不预设必备文件名清单） ----------
@@ -357,8 +390,8 @@ check('迁移与部署指引都包含 upload_locks 预留量表（纯点击建�
 console.log(`\n=== 通过 ${results.length} 项断言 ===`);
 console.log(`
 沙盒已验：
-  · 55 条单元测试（契约 / 路径 / 依赖解析 / 单文件同名显式跳过 / xmind 格式判定 / 成本闸门 / fail-closed / 一键熔断）
-  · 本冒烟 ${results.length} 项：三区输入 → 剥顶层 → R2 key 格局 → 单文件同名显式跳过 → 依赖逐项断言 → 两代 xmind 出图 → 成本闸门 → 反模式静态审计
+  · 59 条单元测试（契约 / 路径 / 依赖解析 / 单文件同名显式跳过 / 封面落条目根 / xmind 格式判定 / 成本闸门 / fail-closed / 一键熔断）
+  · 本冒烟 ${results.length} 项：三区输入 → 剥顶层 → R2 key 格局 → 单文件同名显式跳过 → 封面并入 → 依赖逐项断言 → 两代 xmind 出图 → 成本闸门 → 反模式静态审计
   · Worker TypeScript 类型检查、Worker bundle 体积、前端 vendor 产物语法
 
 只能真机 / 用户本地验（见档案 §0.6）：

@@ -70,3 +70,22 @@ export function skipSingleFileDuplicates(consoleFile, mindmapFile, relativePaths
   }
   return { kept, skipped };
 }
+
+// 封面作为「新增的可选资源内容」上传（包②）。
+// 口径：落条目根、不建 cover/ 子层级、与两单文件平级；本地图优先于外链；不另加体积上限。
+// 封面不被引用于主控台，是包内多余文件 → 依赖断言只查「被引用的都在不在」，不会被误拦。
+// 但它仍占一个 R2 key：与两单文件或资源树内已有文件同名时必须显式拒绝，
+// 不静默改名 / 不静默覆盖（原则 8）。返回 paths 供全链使用（体积 / 计划 / 直传 / prepare）。
+export function mergeCoverFile(consoleFile, mindmapFile, relativePaths = [], coverRelativePath = '') {
+  const paths = [...relativePaths];
+  const conflicts = [];
+  if (!coverRelativePath) return { paths, conflicts };
+  if (coverRelativePath === consoleFile || coverRelativePath === mindmapFile) {
+    conflicts.push(`封面与单文件同名：${coverRelativePath}`);
+  }
+  if (paths.includes(coverRelativePath)) {
+    conflicts.push(`封面与资源树内文件同名：${coverRelativePath}`);
+  }
+  if (!conflicts.length) paths.push(coverRelativePath);
+  return { paths, conflicts };
+}

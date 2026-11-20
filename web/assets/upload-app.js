@@ -8,6 +8,7 @@ import {
   findDuplicateNames,
   buildUploadPlan,
   skipSingleFileDuplicates,
+  mergeCoverFile,
 } from '../../shared/paths.js';
 import { extractReferences, buildAvailableSet, findMissingDeps } from '../../shared/deps.js';
 import { COST_GUARD_DEFAULTS, validateSizes } from '../../shared/cost.js';
@@ -16,6 +17,31 @@ const $ = (id) => document.getElementById(id);
 
 // 拖拽树：[{ file, relativePath }]，relativePath 已剥掉所选顶层文件夹名
 let treeFiles = [];
+
+// 包②：本地封面独立维护，不混进 treeFiles —— 这样「清空已选资源树」不会误删封面，
+// 树摘要也不会把封面算进资源包。提交时才作为条目根的一个文件并入上传链。
+// relativePath = 文件原始名 → 落条目根、不建 cover/ 子层级、与两单文件平级。
+let coverFile = null; // { file, relativePath }
+
+function setCoverFile(file) {
+  if (!file) {
+    coverFile = null;
+    $('cover').disabled = false;
+    $('clearCoverBtn').hidden = true;
+    $('coverHint').textContent = '';
+    return;
+  }
+  coverFile = { file, relativePath: file.name };
+  $('cover').disabled = true; // 本地图优先：外链/相对路径文本框灰掉，但仍保留原值
+  $('clearCoverBtn').hidden = false;
+  $('coverHint').textContent =
+    `已选本地封面：${file.name}（落条目根，上方链接暂不生效；体积计入成本闸门）`;
+}
+$('coverFile').addEventListener('change', (event) => setCoverFile(event.target.files[0] ?? null));
+$('clearCoverBtn').addEventListener('click', () => {
+  $('coverFile').value = '';
+  setCoverFile(null);
+});
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => ({
@@ -155,7 +181,8 @@ function readForm() {
     kind: $('kind').value,
     status: $('status').value,
     summary: $('summary').value.trim(),
-    cover: $('cover').value.trim(),
+    // 本地图优先于外链：选了本地封面就用它的 relativePath，文本框（已 disabled）不参与。
+    cover: coverFile ? coverFile.relativePath : $('cover').value.trim(),
     consoleFile: $('consoleFile').files[0]?.name ?? '',
     mindmapFile: $('mindmapFile').files[0]?.name ?? '',
   };
@@ -175,7 +202,14 @@ async function precheck(meta) {
   // 下面所有校验都基于剔除后的树，不重复计体积、不重复 PUT。
   const effective = effectiveTree();
   const skipped = skippedNames(treeFiles);
-  const rels = effective.map((x) => x.relativePath);
+  const coverRel = coverFile?.relativePath ?? '';
+  // 包②：封面作为条目根的一个文件并入上传链；同名时显式拒绝，不静默改名/覆盖。
+  // 封面不被主控台引用，属包内多余文件 → 只查「被引用的都在不在」的依赖断言不会误拦它。
+  const { paths: rels, conflicts: coverConflicts } = mergeCoverFile(
+    meta.consoleFile, meta.mindmapFile, effective.map((x) => x.relativePath), coverRel,
+  );
+  for (const c of coverConflicts) errors.push(`${c}（请给封面改个文件名再选）`);
+  const allTree = coverRel && !coverConflicts.length ? [...effective, coverFile] : effective;
   for (const p of [meta.consoleFile, meta.mindmapFile, ...rels]) {
     if (p && isUnsafeRelativePath(p)) errors.push(`路径不安全：${p}`);
   }
@@ -201,11 +235,11 @@ async function precheck(meta) {
     for (const name of missing) errors.push(`主控台引用的本地文件缺失：${name}`);
   }
 
-  const sizes = collectSizes(meta, effective);
+  const sizes = collectSizes(meta, allTree);
   // 前端用默认阈值提前反馈；若你在 wrangler.toml 改过阈值，以 Worker 权威校验为准。
   const plan = buildUploadPlan(meta.slug || '_', meta.consoleFile, meta.mindmapFile, rels);
   errors.push(...validateSizes({ sizes, plan, guards: COST_GUARD_DEFAULTS }).errors);
-  return { errors, refs, rels, sizes, skipped, effective };
+  return { errors, refs, rels, sizes, skipped, coverRel, effective: allTree };
 }
 
 async function fetchJSON(url) {
@@ -278,7 +312,7 @@ async function submit() {
   setProgress(0, 1, '本地预检…');
   try {
     const meta = readForm();
-    const { errors, refs, rels, sizes, skipped, effective } = await precheck(meta);
+    const { errors, refs, rels, sizes, skipped, coverRel, effective } = await precheck(meta);
     if (errors.length) return showBad('本地预检未通过，未发起上架', errors);
 
     const consoleHtml = await $('consoleFile').files[0].text();
@@ -340,6 +374,9 @@ async function submit() {
         `绝对外链 ${refs.external.length} 个保持原样，不纳入存在性断言`,
         ...(skipped.length
           ? [`已跳过 ${skipped.length} 个与 ①/② 区同名的资源树文件：${[...new Set(skipped)].join('、')}（以单文件区为准，不重复上传）`]
+          : []),
+        ...(coverRel
+          ? [`本地封面已上传：${coverRel}（落条目根，体积计入成本闸门；外链未使用）`]
           : []),
         `已写入对象 ${fin.objectCount} 个 / ${((fin.totalBytes ?? 0) / 1024 / 1024).toFixed(1)} MB，D1 写后读回校验通过`,
         ...(refs.rootRelative.length
