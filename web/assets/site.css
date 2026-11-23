@@ -124,18 +124,25 @@ main { max-width: 1080px; margin: 0 auto; padding: 28px 20px 56px; }
   background: var(--panel); border: 1px solid var(--line); color: var(--ink);
   border-radius: 8px; padding: 9px 11px; font: inherit; font-size: 14px;
 }
+/* 宽版 4 列时中文标签会折成两行，把该格 input 推到比同行其它格靠后的位置。
+   给网格内所有 label 统一预留两行高度 → 无论折不折行，input 都在同一基线（包④）。 */
+.form-grid .field > label:first-child { min-height: 2.6em; line-height: 1.3; }
 .field textarea { min-height: 78px; resize: vertical; }
 .field input:focus, .field select:focus, .field textarea:focus { outline: 1px solid var(--accent); }
 /* 选了本地封面后，外链/相对路径文本框置灰，明确「本地图优先」 */
 .field input:disabled { opacity: .5; cursor: not-allowed; }
 
-/* 本地封面选择区：独占整行、横排，不塞进 form-grid 的 .field。
-   包② 曾把它嵌进 .field，撑高网格单元导致整页元数据区错位（版式回归，包③ 修正）。
-   只做「移出网格 + 横排」的最小恢复，不新增视觉样式、不做美术优化（F 段暂存项仍不动）。 */
+/* 封面整块独占整行：链接填写格与本地封面上传紧挨在一起（包④ 修正「插在简介后面」的割裂感）。
+   带 .field 复用输入样式 + disabled 灰态，但不占 form-grid 单元格，不会撑坏等高网格。
+   只做结构恢复，不新增视觉样式、不做美术优化（F 段暂存项仍不动）。 */
 .cover-block { margin-top: 12px; }
 .cover-block__row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .cover-block .cover-pick-hint { font-size: 12px; color: var(--muted); }
-.cover-block input[type=file] { font-size: 12px; color: var(--muted); max-width: 100%; }
+/* .field input 会给 file input 套上文本框边框，这里改回原生文件选择外观 */
+.cover-block input[type=file] {
+  padding: 0; border: 0; background: transparent;
+  font-size: 12px; color: var(--muted); max-width: 100%;
+}
 .cover-block .btn-quiet {
   padding: 6px 12px; font-size: 12px;
   background: var(--panel-2); color: var(--ink); border: 1px solid var(--line);

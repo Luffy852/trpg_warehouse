@@ -18,7 +18,7 @@
     <h2>① 元数据</h2>
     <div class="form-grid">
       <div class="field"><label for="title">标题 *</label><input id="title" required placeholder="封冻恶疾"></div>
-      <div class="field"><label for="slug">slug *（英文小写短横线；留空自动从标题生成）</label><input id="slug" placeholder="frozen-malice"></div>
+      <div class="field"><label for="slug">网址代称 slug *（留空则自动生成）</label><input id="slug" placeholder="frozen-malice" title="留空时从标题自动生成英文小写短横线；纯中文标题会生成空值，需手动填写"></div>
       <div class="field"><label for="system">规则 system *</label>
         <select id="system"><option value="dnd">dnd</option><option value="coc">coc</option><option value="other">other</option></select>
       </div>
@@ -28,11 +28,13 @@
       <div class="field"><label for="status">状态 status *</label>
         <select id="status"><option value="published">published · 立即上架</option><option value="draft">draft · 不进浏览端</option></select>
       </div>
-      <div class="field"><label for="cover">封面（可选：包内相对路径或 https 外链）</label><input id="cover" placeholder="assets/cover.png"></div>
       <div class="field" style="grid-column:1/-1"><label for="summary">简介 summary（可选）</label><textarea id="summary" placeholder="一句话简介"></textarea></div>
     </div>
-    <!-- 本地封面选择区独占整行：不放进 form-grid 的 .field，避免把等高网格单元撑高、文字折行（包② 版式回归修正） -->
-    <div class="cover-block">
+    <!-- 封面整块独占整行：链接填写格与本地封面上传紧挨在一起（包④ 修正逻辑割裂）。
+         同时带 .field 复用输入样式与 disabled 灰态，但不占 form-grid 单元格，不会撑坏等高网格。 -->
+    <div class="field cover-block">
+      <label for="cover">封面（可选：包内相对路径或 https 外链）</label>
+      <input id="cover" placeholder="assets/cover.png">
       <div class="cover-block__row">
         <label for="coverFile" class="cover-pick-hint">或选一张本地封面图（选中后优先于上方链接）</label>
         <input type="file" id="coverFile" accept="image/*">

@@ -178,7 +178,7 @@ check('封面与已有文件同名 → 显式拒绝，不静默覆盖', () => {
   assert.deepEqual(b.paths, tree);
 });
 
-// ---------- 2d. 包③：Worker 兜底 + 上传页版式回归防护 ----------
+// ---------- 2d. 包③ / 包④：Worker 兜底 + 上传页版式与文案回归防护 ----------
 check('Worker 4 个 API 分支 return await：异步错误不绕过 catch（JSON 500/413/503 不退化成 1101）', () => {
   const src = readFileSync(join(ROOT, 'worker/src/index.ts'), 'utf8');
   const bare = [...src.matchAll(/\breturn\s+handle(Modules|Prepare|Finalize|Download)\s*\(/g)].map((m) => m[1]);
@@ -186,19 +186,35 @@ check('Worker 4 个 API 分支 return await：异步错误不绕过 catch（JSON
   const awaited = [...src.matchAll(/\breturn\s+await\s+handle(Modules|Prepare|Finalize|Download)\s*\(/g)].map((m) => m[1]);
   assert.deepEqual(awaited.sort(), ['Finalize', 'Download', 'Modules', 'Prepare'].sort());
 });
-check('上传页版式：本地封面选择区独立于 form-grid，cover 字段仍占一格（包② 回归防护）', () => {
+check('包④：slug 标签改短文案 + form-grid 内 label 统一预留两行高度（防中文折行把输入框推后）', () => {
+  const html = readFileSync(join(ROOT, 'web/upload/index.html'), 'utf8');
+  assert.ok(html.includes('网址代称 slug'), 'slug 标签应采用用户指定的短文案');
+  assert.ok(!html.includes('英文小写短横线；留空自动从标题生成'), '旧长标签应移除（宽版 4 列时会折成两行）');
+  assert.ok(html.includes('纯中文标题'), '自动生成的边界应放进 title 悬浮说明，不塞回标签');
+  const css = readFileSync(join(ROOT, 'web/assets/site.css'), 'utf8');
+  assert.ok(
+    /\.form-grid\s+\.field\s*>\s*label:first-child\s*\{[^}]*min-height/.test(css),
+    'form-grid 内所有 label 应有统一 min-height，折行也不推后输入框',
+  );
+});
+check('包④：封面链接与本地封面上传同块（逻辑不割裂），且都不占 form-grid 单元格', () => {
   const html = readFileSync(join(ROOT, 'web/upload/index.html'), 'utf8');
   const gridStart = html.indexOf('<div class="form-grid">');
-  const block = html.indexOf('class="cover-block"');
-  assert.ok(gridStart > 0 && block > gridStart);
+  const block = html.indexOf('class="field cover-block"');
+  assert.ok(gridStart > 0 && block > gridStart, '封面块应在 form-grid 之后独占整行');
   const gridBody = html.slice(gridStart, block);
+  assert.ok(!gridBody.includes('id="cover"'), 'cover 文本框不应留在 form-grid 里（否则与本地上传割裂）');
   assert.ok(!gridBody.includes('id="coverFile"'), '本地封面 file input 不应塞进 form-grid 的等高格子');
-  assert.ok(!gridBody.includes('class="cover-picker"'), '旧 cover-picker 结构应已移出');
-  assert.ok(gridBody.includes('id="cover"'), 'cover 文本框仍应留在 form-grid 内');
-  assert.ok(html.indexOf('id="coverFile"') > block, '本地封面选择区应在独立块内');
+  assert.ok(!gridBody.includes('class="cover-picker"'), '旧 cover-picker 结构应已移除');
+  assert.ok(gridBody.includes('id="summary"'), '简介仍应留在 form-grid 内');
+  const blockBody = html.slice(block, html.indexOf('</section>', block));
+  for (const id of ['cover', 'coverFile', 'clearCoverBtn', 'coverHint']) {
+    assert.ok(blockBody.includes(`id="${id}"`), `封面块内应含 id=${id}（链接与上传紧挨着）`);
+  }
   const css = readFileSync(join(ROOT, 'web/assets/site.css'), 'utf8');
   assert.ok(css.includes('.cover-block'), 'site.css 应有独立封面块样式');
   assert.ok(css.includes('.field input:disabled'), '灰态样式应保留');
+  assert.ok(css.includes('.cover-block input[type=file]'), 'file input 不应被 .field input 套上文本框边框');
 });
 check('防误伤：版式重构后上传端 JS 引用的所有元素 id 仍存在', () => {
   const html = readFileSync(join(ROOT, 'web/upload/index.html'), 'utf8');
@@ -425,7 +441,7 @@ console.log(`\n=== 通过 ${results.length} 项断言 ===`);
 console.log(`
 沙盒已验：
   · 59 条单元测试（契约 / 路径 / 依赖解析 / 单文件同名显式跳过 / 封面落条目根 / xmind 格式判定 / 成本闸门 / fail-closed / 一键熔断）
-  · 本冒烟 ${results.length} 项：三区输入 → 剥顶层 → R2 key 格局 → 单文件同名显式跳过 → 封面并入 → Worker return await 静态审计 → 上传页版式回归防护 → 依赖逐项断言 → 两代 xmind 出图 → 成本闸门 → 反模式静态审计
+  · 本冒烟 ${results.length} 项：三区输入 → 剥顶层 → R2 key 格局 → 单文件同名显式跳过 → 封面并入 → Worker return await 静态审计 → 上传页 slug 短文案 / label 等高 / 封面同块 → 依赖逐项断言 → 两代 xmind 出图 → 成本闸门 → 反模式静态审计
   · Worker TypeScript 类型检查、Worker bundle 体积、前端 vendor 产物语法
 
 只能真机 / 用户本地验（见档案 §0.6）：
