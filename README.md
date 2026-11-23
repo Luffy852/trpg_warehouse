@@ -2,11 +2,11 @@
 
 公开只读的网页版 TRPG 模组库。上传者在受 Access 保护的 `/upload` 提交**主控台单文件 + `.xmind` 单文件 + 文件夹拖拽资源树**，浏览端即时上架；访客点卡片进条目页，并列拿到「思维导图 / 主控台」两个入口，思维导图在**浏览器内直接预览**，主控台原样托管、内部链接自然取到对应文件。
 
-> **当前参考档案版本：v4**（`docs/项目档案_trpg-warehouse_v4.md`）。`docs/` 内会累积多份历史档案，属正常，不要删除；S1 完成后由用户手动归档。
-> 本仓库是 **BC · B1** 首次开发产物，按《项目档案_trpg-warehouse_v4.md》§0 / §1 / §3.2 实现。
+> **当前参考档案版本：v5**（`docs/项目档案_trpg-warehouse_v5.md`）。`docs/` 内会累积多份历史档案，属正常，不要删除；S1 完成后由用户手动归档。
+> 本仓库是 **BC · B1** 首次开发产物，按《项目档案_trpg-warehouse_v5.md》§0 / §1 / §3.2 实现；W1 期间已落盘包①–④ 修正（见部署指引「W1 收官记录」）。
 > **部署方式是纯点击（GitHub 网页 + Cloudflare Dashboard + Workers Builds），不需要本地命令行**；步骤见 [`docs/部署指引_纯点击.md`](docs/部署指引_纯点击.md)。
 > **成本控制（B1-3）**：R2 没有原生硬性账单上限，项目用「写口体积/容量闸门（含预留量）+ CDN 缓存/WAF + 账单告警 + **一键熔断**」兜底；原则是 **fail-closed（宁停不烧钱）**，且成本机制本身零定时/高频遍历。第三方建议的逐条核实与取舍见部署指引**附录 A**与 8.8 节，第 8 步是必做项。
-> 代码已通过 45 条单测 / 23 项离线冒烟 / TypeScript 类型检查 / bundle 486 KB（**本轮收尾未改代码**）。**Cloudflare 首次部署已成功上线**（`warehouse.finewinginnovation.cn` / `warehouseasset.finewinginnovation.cn`）；W1 验收进行中：#3 / #4 已通过、#5 受阻于一个已知代码缺陷、其余待复跑。真实样本、成本控制真机项属 W2，仍待完成。
+> 代码已通过 **59 条单测 / 32 项离线冒烟 / TypeScript 类型检查 / bundle 486 KB**（W1 收官终态；`npm run typecheck` 在沙盒依赖不全时 A/B 等价、改动零新增类型错误，Workers Builds 用 `bun install` 装齐后全绿）。**Cloudflare 部署与第 10 步 1–16 项真机验收已全部通过**（`warehouse.finewinginnovation.cn` / `warehouseasset.finewinginnovation.cn`）；
 
 ---
 
@@ -49,9 +49,9 @@
 | `web/vendor/*` | **生成物**：改完 `web/assets/*.js` 跑 `npm run build` 重出，不直接手改 |
 | `migrations/0001_init.sql` | D1 `modules` 表（一条目一行，upsert；**`total_bytes` 供累计容量锁**）+ **`upload_locks` 预留量表** |
 | `r2-cors.json` | R2 CORS 模板：粘贴到 Dashboard 的 CORS Policy JSON tab，同时放行 `GET` 与 `PUT` |
-| `scripts/build-web.mjs` `scripts/smoke.mjs` | 前端打包 / B1 离线冒烟（含两代 xmind 合成样本） |
+| `scripts/build-web.mjs` `scripts/smoke.mjs` | 前端打包 / 离线冒烟（**32 项**：两代 xmind 合成样本 + 封面并入 + `return await` 静态审计 + 上传页版式回归 + 成本闸门 + fail-closed） |
 | `docs/部署指引_纯点击.md` | **部署步骤唯一出处**（网页点选，零命令行） |
-| **`docs/项目档案_trpg-warehouse_v4.md`** | **当前参考版本 v4 ＝ 项目唯一信息载体**。`docs/` 里 v1 / v2 / v3 等旧版**并存、不删、不作依据**；S1 完成后由用户手动归入 `docs/archive/`。**§0.11 是每个新对话开场必读的「硬盘体系」规程** |
+| **`docs/项目档案_trpg-warehouse_v5.md`** | **当前参考版本 v5 ＝ 项目唯一信息载体**。`docs/` 里 v1 / v2 / v3 / v4 等旧版**并存、不删、不作依据**；S1 完成后由用户手动归入 `docs/archive/`。**§0.11 是每个新对话开场必读的「硬盘体系」规程** |
 
 ---
 
@@ -61,13 +61,13 @@
 
 **部署全程在浏览器里完成**：GitHub 网页编辑 + Cloudflare Dashboard / Zero Trust 点选 + Workers Builds 自动构建。**不需要 clone、不需要装 Node、不需要任何 `npm` / `wrangler` / `git` 命令。**
 
-> 📄 **详细步骤只写在 [`docs/部署指引_纯点击.md`](docs/部署指引_纯点击.md)**：值清单、每一步点哪里、粘贴哪段 SQL / JSON、排错表、纯点击验收清单都在那里；**该指引已于 2026-11-20 按首次部署真机实测全面修订**（Zero Trust 新界面、自定义域兜底、Free 档限制、已知问题与当前进度）。本节只给路线图，避免两份说明不一致。
+> 📄 **详细步骤只写在 [`docs/部署指引_纯点击.md`](docs/部署指引_纯点击.md)**：值清单、每一步点哪里、粘贴哪段 SQL / JSON、排错表、纯点击验收清单都在那里；**该指引已于 2026-11-20 首次部署实测修订、2026-11-23 W1 收官再修订**（Zero Trust 新界面、自定义域兜底、Free 档限制、W1 收官记录）。本节只给路线图，避免两份说明不一致。
 
 ### 3.1 路线图
 
 | 阶段 | 在哪个网页 | 做什么 |
 |---|---|---|
-| 0 | GitHub | 上传 `trpg-warehouse_v4文档迭代包.zip`（**只增不删**：整包拖入即可；档案按版本号新增 v4，**不用删旧版、不用管覆盖**；`docs/部署指引_纯点击.md` 与 `README.md` 为同名替换） |
+| 0 | GitHub | 上传 `W1收尾_同步包.zip`（**档案只增不删**：新增 `docs/项目档案_trpg-warehouse_v5.md`，不用删旧版、不用管覆盖；`docs/部署指引_纯点击.md` 与 `README.md` 为**同名替换**） |
 | 1 | — | 备好「值清单」（6 个配置值 + 3 个 Secret） |
 | 2 | Cloudflare Dashboard | 建 D1 `trpg-warehouse-db`、R2 `trpg-warehouse-assets`、**R2 自定义域**、R2 S3 API token；停用 r2.dev |
 | 3 | Zero Trust | 设 team domain + 建 Self-hosted Access 应用（`/upload*`、`/api/upload*` 两条 path） |
@@ -144,7 +144,7 @@ Workers Builds 会自动 clone 仓库并**自动安装依赖**。Free 计划每�
 | V-13 不养副本 / 不占 Worker | ✅ 解析全在访客浏览器，预览库在静态壳 |
 
 > **以上真机项按 [`docs/部署指引_纯点击.md`](docs/部署指引_纯点击.md) 第 10 步在浏览器里逐条点验，不需要命令行。**
-> 若你想在开发机上额外跑一遍离线断言（**部署完全不需要这一步**），才用得到 `npm test`（45 条单测）、`npm run smoke`（23 项离线冒烟）、`npm run typecheck`（Worker TypeScript）。
+> 若你想在开发机上额外跑一遍离线断言（**部署完全不需要这一步**），才用得到 `npm test`（59 条单测）、`npm run smoke`（32 项离线冒烟）、`npm run typecheck`（Worker TypeScript）。
 > **成本控制真机项**（缓存命中不回源、WAF 限流 / 防盗链、Billing 告警、`QUOTA_EXCEEDED` / `BUCKET_CAP_EXCEEDED` 413 回执、累计容量锁、一键熔断 503、预留量累积）按部署指引第 10 步第 11–16 项点验，沙盒没有把它们混进「已完成」。
 
 ---
