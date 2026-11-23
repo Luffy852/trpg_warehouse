@@ -67,7 +67,7 @@ BUCKET_CAP_GB = "8"
 #   发现用量异常、或单纯想先停一停时用它；配合 R2 → Settings → Custom Domains → Disable domain
 #   立即切断公开读，就完成「宁可停止访问也不付账单」。恢复把值改回 "1" 即可，无需改代码。
 #   刻意不引入任何 cron / alarm / 定时遍历脚本 —— 成本机制本身绝不能烧额度。
-WRITES_ENABLED = "0"
+WRITES_ENABLED = "1"
 
 # 3 个 Secret 不写在这里，在 Dashboard → Worker → Settings → Variables and Secrets 加：
 #   R2_ACCESS_KEY_ID       R2 S3 API token 的 Access Key ID
