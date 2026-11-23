@@ -178,6 +178,40 @@ check('封面与已有文件同名 → 显式拒绝，不静默覆盖', () => {
   assert.deepEqual(b.paths, tree);
 });
 
+// ---------- 2d. 包③：Worker 兜底 + 上传页版式回归防护 ----------
+check('Worker 4 个 API 分支 return await：异步错误不绕过 catch（JSON 500/413/503 不退化成 1101）', () => {
+  const src = readFileSync(join(ROOT, 'worker/src/index.ts'), 'utf8');
+  const bare = [...src.matchAll(/\breturn\s+handle(Modules|Prepare|Finalize|Download)\s*\(/g)].map((m) => m[1]);
+  assert.deepEqual(bare, [], `仍有未 await 的分支：${bare.join('、')}`);
+  const awaited = [...src.matchAll(/\breturn\s+await\s+handle(Modules|Prepare|Finalize|Download)\s*\(/g)].map((m) => m[1]);
+  assert.deepEqual(awaited.sort(), ['Finalize', 'Download', 'Modules', 'Prepare'].sort());
+});
+check('上传页版式：本地封面选择区独立于 form-grid，cover 字段仍占一格（包② 回归防护）', () => {
+  const html = readFileSync(join(ROOT, 'web/upload/index.html'), 'utf8');
+  const gridStart = html.indexOf('<div class="form-grid">');
+  const block = html.indexOf('class="cover-block"');
+  assert.ok(gridStart > 0 && block > gridStart);
+  const gridBody = html.slice(gridStart, block);
+  assert.ok(!gridBody.includes('id="coverFile"'), '本地封面 file input 不应塞进 form-grid 的等高格子');
+  assert.ok(!gridBody.includes('class="cover-picker"'), '旧 cover-picker 结构应已移出');
+  assert.ok(gridBody.includes('id="cover"'), 'cover 文本框仍应留在 form-grid 内');
+  assert.ok(html.indexOf('id="coverFile"') > block, '本地封面选择区应在独立块内');
+  const css = readFileSync(join(ROOT, 'web/assets/site.css'), 'utf8');
+  assert.ok(css.includes('.cover-block'), 'site.css 应有独立封面块样式');
+  assert.ok(css.includes('.field input:disabled'), '灰态样式应保留');
+});
+check('防误伤：版式重构后上传端 JS 引用的所有元素 id 仍存在', () => {
+  const html = readFileSync(join(ROOT, 'web/upload/index.html'), 'utf8');
+  const js = readFileSync(join(ROOT, 'web/assets/upload-app.js'), 'utf8');
+  const ids = [...new Set([...js.matchAll(/\$\('([\w-]+)'\)/g)].map((m) => m[1]))];
+  const missing = ids.filter((id) => !html.includes(`id="${id}"`));
+  assert.deepEqual(missing, [], `HTML 缺少元素：${missing.join('、')}`);
+  // 封面功能所需 4 个元素一个都不能少（本地图优先 / 灰态 / 移除 / 提示）
+  for (const id of ['cover', 'coverFile', 'clearCoverBtn', 'coverHint']) {
+    assert.ok(html.includes(`id="${id}"`), `缺少 id=${id}`);
+  }
+});
+
 // ---------- 3. 按主控台实际引用逐项断言（不预设必备文件名清单） ----------
 const consoleHtml = `
 <!doctype html><html><body>
@@ -391,7 +425,7 @@ console.log(`\n=== 通过 ${results.length} 项断言 ===`);
 console.log(`
 沙盒已验：
   · 59 条单元测试（契约 / 路径 / 依赖解析 / 单文件同名显式跳过 / 封面落条目根 / xmind 格式判定 / 成本闸门 / fail-closed / 一键熔断）
-  · 本冒烟 ${results.length} 项：三区输入 → 剥顶层 → R2 key 格局 → 单文件同名显式跳过 → 封面并入 → 依赖逐项断言 → 两代 xmind 出图 → 成本闸门 → 反模式静态审计
+  · 本冒烟 ${results.length} 项：三区输入 → 剥顶层 → R2 key 格局 → 单文件同名显式跳过 → 封面并入 → Worker return await 静态审计 → 上传页版式回归防护 → 依赖逐项断言 → 两代 xmind 出图 → 成本闸门 → 反模式静态审计
   · Worker TypeScript 类型检查、Worker bundle 体积、前端 vendor 产物语法
 
 只能真机 / 用户本地验（见档案 §0.6）：

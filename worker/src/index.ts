@@ -47,17 +47,20 @@ export default {
         );
       }
 
-      if (path === '/api/modules' && request.method === 'GET') return handleModules(env);
+      // 四个 API 分支必须 await：否则 handler 里的异步错误会绕过下面的 catch，
+      // JSON 500 / 413 / 503 会退化成 Cloudflare 1101 页（影响 #11 / #12 / #15 的报错形态）。
+      // 见档案 §0.6「return await 兜底隐患」，W1 跑通后单独修正，不与 #5 混改。
+      if (path === '/api/modules' && request.method === 'GET') return await handleModules(env);
 
       if (path === '/api/upload/prepare' && request.method === 'POST') {
         await requireAccess(request, env);
-        return handlePrepare(request, env);
+        return await handlePrepare(request, env);
       }
       if (path === '/api/upload/finalize' && request.method === 'POST') {
         await requireAccess(request, env);
-        return handleFinalize(request, env);
+        return await handleFinalize(request, env);
       }
-      if (path === '/api/download' && request.method === 'GET') return handleDownload(url, env);
+      if (path === '/api/download' && request.method === 'GET') return await handleDownload(url, env);
 
       // 首页 / 条目页 / 预览页 / CSS / vendor JS 全部走边缘静态直出
       return env.ASSETS.fetch(request);
