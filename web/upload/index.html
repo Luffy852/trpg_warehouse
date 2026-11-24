@@ -28,6 +28,14 @@
       <div class="field"><label for="status">状态 status *</label>
         <select id="status"><option value="published">published · 立即上架</option><option value="draft">draft · 不进浏览端</option></select>
       </div>
+      <!-- W2-b：显式更新开关。勾选项只开「同名 slug 覆盖」这一个口子；不勾选时重名一律拒绝。 -->
+      <div class="field field--checkbox">
+        <label for="isUpdate">模组更新</label>
+        <label class="checkbox-row" for="isUpdate">
+          <input type="checkbox" id="isUpdate">
+          <span class="hint-inline">未勾选同slug将拒绝</span>
+        </label>
+      </div>
       <div class="field" style="grid-column:1/-1"><label for="summary">简介 summary（可选）</label><textarea id="summary" placeholder="一句话简介"></textarea></div>
     </div>
     <!-- 封面整块独占整行：链接填写格与本地封面上传紧挨在一起（包④ 修正逻辑割裂）。

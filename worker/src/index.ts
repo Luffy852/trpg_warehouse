@@ -6,6 +6,7 @@ import { requireAccess, AccessError } from './access';
 import { presignPut } from './presign';
 import { signToken, verifyToken } from './token';
 import { validateMeta } from '../../shared/contract.js';
+import { decideUploadMode } from '../../shared/update-mode.js';
 import { isUnsafeRelativePath, findDuplicateNames, buildUploadPlan } from '../../shared/paths.js';
 import { extractReferences, buildAvailableSet, findMissingDeps } from '../../shared/deps.js';
 import {
@@ -129,6 +130,31 @@ async function handlePrepare(request: Request, env: Env): Promise<Response> {
     return json({ error: '元数据不合法', code: 'INVALID_META', details: metaErrors }, 400);
   }
 
+  // ── W2-b：slug 重名显式更新开关 · Worker 侧权威判定（含 draft）────────────
+  // 前端预检只能看到已发布条目（/api/modules 过滤 published），草稿重名必须靠这里。
+  // 未勾选而 slug 已存在 → 409 拒绝：索引不变、也不记预留量（不消耗成本闸门额度）。
+  // 勾选且已存在 → 才允许覆盖；勾选但不存在 → 正常新建（勾选项只开这一个口子）。
+  const existing = await env.DB.prepare(
+    'SELECT status FROM modules WHERE slug = ?',
+  )
+    .bind(meta.slug)
+    .first<{ status: string }>();
+  const decision = decideUploadMode({ exists: !!existing, isUpdate: meta.isUpdate });
+  if (!decision.allowed) {
+    return json(
+      {
+        error: '该 slug 已存在；未勾选「模组更新」时不允许覆盖',
+        code: 'SLUG_EXISTS',
+        details: [
+          `网址代称 ${meta.slug} 已对应一个条目（含 draft）`,
+          '若这是修订，请在上传页勾选「模组更新」后重新提交；否则请换一个 slug',
+          '不允许修改 slug：如需换名，须删除 D1 条目与 R2 资料后重新上传（W2-c）',
+        ],
+      },
+      409,
+    );
+  }
+
   const unsafe = [
     ...[meta.consoleFile, meta.mindmapFile].filter(isUnsafeRelativePath),
     ...meta.relativePaths.filter(isUnsafeRelativePath),
@@ -242,6 +268,8 @@ async function handlePrepare(request: Request, env: Env): Promise<Response> {
     keys: plan.map((p) => p.key),
     declaredTotalBytes: sizeCheck.declaredTotalBytes,
     bucketCapBytes: guards.bucketCapBytes,
+    isUpdate: meta.isUpdate,
+    mode: decision.mode ?? undefined,
     exp: Date.now() + expires * 1000,
   });
 
@@ -283,6 +311,41 @@ async function handleFinalize(request: Request, env: Env): Promise<Response> {
   if (body?.slug && body.slug !== payload.slug) {
     return json({ error: 'slug 与令牌不一致', code: 'SLUG_MISMATCH' }, 400);
   }
+
+  // ── W2-b：finalize 再判一次 ────────────────────────────────────────────────
+  // prepare→finalize 之间可能有别的条目上架 / 插队，只有「勾选更新 + 库中确实已存在」
+  // 才允许走 upsert 的覆盖分支；旧令牌缺 isUpdate 一律按未勾选（fail-safe）。
+  const isUpdate = payload.isUpdate === true;
+  const existing = await env.DB.prepare(
+    'SELECT status FROM modules WHERE slug = ?',
+  )
+    .bind(payload.slug)
+    .first<{ status: string }>();
+  const decision = decideUploadMode({ exists: !!existing, isUpdate });
+  if (!decision.allowed) {
+    return json(
+      {
+        error: '该 slug 已存在；未勾选「模组更新」时不允许覆盖',
+        code: 'SLUG_EXISTS',
+        details: [
+          '对象已直传但未写索引；预留量按「只增不减」保留，容量锁宁可高估',
+          '若这是修订，请在上传页勾选「模组更新」后重新提交',
+        ],
+      },
+      409,
+    );
+  }
+  if (payload.mode && payload.mode !== decision.mode) {
+    return json(
+      {
+        error: '上架模式在 prepare 与 finalize 之间发生变化，拒绝写索引',
+        code: 'MODE_CHANGED',
+        details: [`prepare=${payload.mode}，finalize=${decision.mode}`],
+      },
+      409,
+    );
+  }
+  const previousStatus = existing?.status ?? null;
 
   // 「上传成功」≠「浏览端多了一张卡」：文件没真写进去就不写索引（P-05）
   // 顺便用 R2 的真实 size 复核 prepare 时的声明，防止少报体积绕过成本闸门。
@@ -379,14 +442,21 @@ async function handleFinalize(request: Request, env: Env): Promise<Response> {
     )
     .run();
 
+  // W2-b：读回校验从 5 个字段扩到全部元数据 —— 覆盖更新时「内容已更新」的 Worker 侧后盾。
+  // draft→draft 的更新在浏览端列表不可见，前端无法逐字段比对，只能靠这里兜住。
   const row = await env.DB.prepare(
-    'SELECT slug, status, console_file, mindmap_file, total_bytes FROM modules WHERE slug = ?',
+    'SELECT slug, title, system, kind, summary, cover, status, console_file, mindmap_file, total_bytes FROM modules WHERE slug = ?',
   )
     .bind(payload.slug)
-    .first<Pick<ModuleRow, 'slug' | 'status' | 'console_file' | 'mindmap_file' | 'total_bytes'>>();
+    .first<ModuleRow>();
 
   if (
     !row ||
+    row.title !== m.title ||
+    row.system !== m.system ||
+    row.kind !== m.kind ||
+    row.summary !== m.summary ||
+    row.cover !== m.cover ||
     row.status !== m.status ||
     row.console_file !== m.consoleFile ||
     row.mindmap_file !== m.mindmapFile ||
@@ -402,6 +472,8 @@ async function handleFinalize(request: Request, env: Env): Promise<Response> {
     ok: true,
     slug: payload.slug,
     status: m.status,
+    mode: decision.mode,
+    previousStatus,
     verified: true,
     objectCount: payload.keys.length,
     totalBytes: actual.actualTotalBytes,

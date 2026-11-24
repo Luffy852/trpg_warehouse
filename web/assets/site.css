@@ -127,6 +127,16 @@ main { max-width: 1080px; margin: 0 auto; padding: 28px 20px 56px; }
 /* 宽版 4 列时中文标签会折成两行，把该格 input 推到比同行其它格靠后的位置。
    给网格内所有 label 统一预留两行高度 → 无论折不折行，input 都在同一基线（包④）。 */
 .form-grid .field > label:first-child { min-height: 2.6em; line-height: 1.3; }
+/* W2-b：「模组更新」占第二行 status 右侧格。.field input 会给所有 input 套文本框边框，
+   这里恢复原生复选框外观；label 等高规则仍保留，复选框与同行 select 视觉对齐。 */
+.field--checkbox .checkbox-row {
+  display: flex; align-items: center; gap: 8px; min-height: 38px;
+}
+.field--checkbox input[type=checkbox] {
+  width: 16px; height: 16px; padding: 0; border-radius: 3px;
+  flex: none; accent-color: var(--accent); cursor: pointer;
+}
+.field--checkbox .hint-inline { font-size: 12px; color: var(--muted); }
 .field textarea { min-height: 78px; resize: vertical; }
 .field input:focus, .field select:focus, .field textarea:focus { outline: 1px solid var(--accent); }
 /* 选了本地封面后，外链/相对路径文本框置灰，明确「本地图优先」 */

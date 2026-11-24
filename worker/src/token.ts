@@ -19,6 +19,10 @@ export interface UploadTokenPayload {
   declaredTotalBytes: number;
   /** prepare 时的桶容量闸门快照，避免两次请求之间改配置绕过 */
   bucketCapBytes: number;
+  /** W2-b：prepare 时是否勾选「模组更新」。旧版 / 在途令牌无此字段 → finalize 按 false 处理（fail-safe，不会误开覆盖口子） */
+  isUpdate?: boolean;
+  /** prepare 时判定的模式；finalize 再判一次，不一致就拒（防两次请求之间被插队） */
+  mode?: 'created' | 'updated';
   exp: number;
 }
 

@@ -27,6 +27,9 @@ export const prepareSchema = z.object({
   // 成本闸门：key = relativePath（含两个单文件名），value = 字节数。
   // 上传端声明只是第一道，finalize 会用 R2 head().size 复核真实写入。
   sizes: z.record(z.string(), z.number().int().nonnegative()),
+  // W2-b：显式更新开关。缺省 false → 同 slug 一律拒绝，不允许静默覆盖（含 draft）。
+  // 勾选项只是开一个「同名 slug 覆盖」的口子；slug 不存在时勾选也走正常新建。
+  isUpdate: z.boolean().optional().default(false),
 });
 
 export type PrepareInput = z.infer<typeof prepareSchema>;

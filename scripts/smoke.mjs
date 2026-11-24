@@ -10,6 +10,7 @@ import { zipSync, unzipSync, strFromU8 } from 'fflate';
 import { importXMindFile, convertXmindToMindElixir } from '@mind-elixir/import-xmind';
 import { inspectXmind } from '../shared/xmind.js';
 import { validateMeta, slugify } from '../shared/contract.js';
+import { decideUploadMode } from '../shared/update-mode.js';
 import {
   stripTopFolder,
   buildUploadPlan,
@@ -226,6 +227,73 @@ check('防误伤：版式重构后上传端 JS 引用的所有元素 id 仍存�
   for (const id of ['cover', 'coverFile', 'clearCoverBtn', 'coverHint']) {
     assert.ok(html.includes(`id="${id}"`), `缺少 id=${id}`);
   }
+});
+
+// ---------- 2e. W2-b：slug 重名显式更新开关（双侧校验 + D-01 断言分叉）----------
+check('W2-b：上传页「模组更新」勾选项，文案 / 副提示 / 位置按定稿', () => {
+  const html = readFileSync(join(ROOT, 'web/upload/index.html'), 'utf8');
+  assert.ok(html.includes('id="isUpdate"'), '应有 id=isUpdate 的复选框');
+  assert.ok(html.includes('type="checkbox"'), '必须是 checkbox，不能是下拉或按钮');
+  assert.ok(html.includes('模组更新'), 'label 文案应为「模组更新」');
+  assert.ok(html.includes('未勾选同slug将拒绝'), '副提示应为用户定稿原句');
+  const status = html.indexOf('id="status"');
+  const box = html.indexOf('id="isUpdate"');
+  const summary = html.indexOf('id="summary"');
+  assert.ok(status > 0 && box > status && summary > box, '勾选项应在 status 之后、summary 之前（紧挨状态标签）');
+});
+check('W2-b：复选框恢复原生外观；包④ label 等高规则未被破坏', () => {
+  const css = readFileSync(join(ROOT, 'web/assets/site.css'), 'utf8');
+  assert.ok(css.includes('.field--checkbox'), '应有独立复选框样式');
+  assert.ok(/\.field--checkbox\s+input\[type=checkbox\]/.test(css), 'checkbox 不能被 .field input 套上文本框边框');
+  assert.ok(
+    /\.form-grid\s+\.field\s*>\s*label:first-child\s*\{[^}]*min-height/.test(css),
+    '包④「form-grid 内 label 统一两行高度」回归规则仍应在',
+  );
+});
+check('W2-b：schema 默认 false、token 顶层带 isUpdate（旧令牌按未勾选处理）', () => {
+  const schema = readFileSync(join(ROOT, 'worker/src/schema.ts'), 'utf8');
+  assert.ok(
+    /isUpdate:\s*z\.boolean\(\)\.optional\(\)\.default\(false\)/.test(schema),
+    'isUpdate 缺省必须是 false，不能默认开覆盖口子',
+  );
+  const token = readFileSync(join(ROOT, 'worker/src/token.ts'), 'utf8');
+  assert.ok(/isUpdate\?:\s*boolean/.test(token), '令牌顶层应带 isUpdate');
+});
+check('W2-b：Worker prepare 与 finalize 双侧权威判定；未勾选重名 409、不写索引', () => {
+  const src = readFileSync(join(ROOT, 'worker/src/index.ts'), 'utf8');
+  const prepare = src.slice(src.indexOf('async function handlePrepare'), src.indexOf('async function handleFinalize'));
+  const finalize = src.slice(src.indexOf('async function handleFinalize'), src.indexOf('async function handleDownload'));
+  for (const [name, part] of [['prepare', prepare], ['finalize', finalize]]) {
+    assert.ok(part.includes('decideUploadMode'), `${name} 必须走唯一口径 decideUploadMode`);
+    assert.ok(part.includes('SLUG_EXISTS'), `${name} 必须回执 SLUG_EXISTS`);
+  }
+  assert.ok(prepare.includes('FROM modules WHERE slug = ?'), 'prepare 必须查 D1（含 draft）');
+  assert.ok(finalize.includes('FROM modules WHERE slug = ?'), 'finalize 必须再查一次防并发插队');
+  assert.ok(finalize.includes('mode: decision.mode'), 'finalize 回执要带 mode');
+  assert.ok(finalize.includes('previousStatus'), 'finalize 回执要带 previousStatus');
+});
+check('W2-b：前端预检复用同一份口径，已发布同 slug 且未勾选时本地挡下', () => {
+  const app = readFileSync(join(ROOT, 'web/assets/upload-app.js'), 'utf8');
+  assert.ok(app.includes('decideUploadMode'), '前端预检应复用 shared 唯一口径，不各端各写一份');
+  assert.ok(app.includes("'isUpdate'"), 'readForm 应读取勾选项');
+  assert.ok(app.includes('未勾选「模组更新」'), '本地挡下应有明确文案提示勾选');
+});
+check('W2-b：D-01 断言分叉——created 仍 +1，updated 判「卡片数不变、内容已更新」', () => {
+  const app = readFileSync(join(ROOT, 'web/assets/upload-app.js'), 'utf8');
+  assert.ok(app.includes('expectedCardDelta'), '卡片数期望应走 shared 纯函数，不硬编码 baseline+1');
+  assert.ok(app.includes('verifyUpdatedContent'), '必须有「内容已更新」逐字段判定');
+  assert.ok(app.includes('卡片数不变、内容已更新'), '更新模式回执文案按用户定稿');
+  assert.ok(
+    !/const expected\s*=\s*published\s*\?\s*baseline\s*\+\s*1\s*:\s*baseline/.test(app),
+    '旧的裸 +1 断言应移除',
+  );
+});
+check('先红后绿：把守卫回退成「一律放行」，拒绝断言真的会红', () => {
+  // 模拟回退到线上旧实现（静默覆盖）：exists=true 且未勾选也放行
+  const legacy = ({ exists }) => ({ allowed: true, mode: exists ? 'updated' : 'created' });
+  assert.equal(legacy({ exists: true }).allowed, true);
+  assert.notDeepEqual(legacy({ exists: true }), decideUploadMode({ exists: true, isUpdate: false }));
+  assert.equal(decideUploadMode({ exists: true, isUpdate: false }).allowed, false);
 });
 
 // ---------- 3. 按主控台实际引用逐项断言（不预设必备文件名清单） ----------
@@ -464,8 +532,8 @@ check('缩放修正不接管滚轮 / 触摸输入通路（电脑端与移动端�
 console.log(`\n=== 通过 ${results.length} 项断言 ===`);
 console.log(`
 沙盒已验：
-  · 59 条单元测试（契约 / 路径 / 依赖解析 / 单文件同名显式跳过 / 封面落条目根 / xmind 格式判定 / 成本闸门 / fail-closed / 一键熔断）
-  · 本冒烟 ${results.length} 项：三区输入 → 剥顶层 → R2 key 格局 → 单文件同名显式跳过 → 封面并入 → Worker return await 静态审计 → 上传页 slug 短文案 / label 等高 / 封面同块 → 依赖逐项断言 → 两代 xmind 出图 → 成本闸门 → 反模式静态审计
+  · 单元测试 npm test（契约 / 路径 / 依赖解析 / 单文件同名显式跳过 / 封面落条目根 / xmind 格式判定 / 成本闸门 / fail-closed / 一键熔断 / W2-b 更新模式唯一口径）
+  · 本冒烟 ${results.length} 项：三区输入 → 剥顶层 → R2 key 格局 → 单文件同名显式跳过 → 封面并入 → Worker return await 静态审计 → 上传页版式回归 → W2-b 勾选项 / schema / token / Worker 双侧校验 / D-01 断言分叉 → 依赖逐项断言 → 两代 xmind 出图 → 成本闸门 → 反模式静态审计
   · Worker TypeScript 类型检查、Worker bundle 体积、前端 vendor 产物语法
 
 只能真机 / 用户本地验（见档案 §0.6）：

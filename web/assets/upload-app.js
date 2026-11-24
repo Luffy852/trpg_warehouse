@@ -1,7 +1,9 @@
-// 上传端：三区输入 → 本地预检 → prepare（Worker 权威校验 + 预签名）→ 浏览器直传 R2
-//        → finalize（写 D1）→ 重新拉列表断言「卡片 +1」，通过才显示上架成功。
+// 上传端：三区输入 → 本地预检（W2-b 同 slug 提前挡下）→ prepare（Worker 权威校验 + 预签名）
+//        → 浏览器直传 R2 → finalize（写 D1）→ 重新拉列表做行为断言，通过才显示上架成功。
+//        断言按 fin.mode 分叉：created 仍「卡片 +1」，updated 判「卡片数不变、内容已更新」。
 // 源码在这里，产物是 web/vendor/upload.js（esbuild 打包，随仓库提交）。
 import { slugify, validateMeta } from '../../shared/contract.js';
+import { decideUploadMode, expectedCardDelta, verifyUpdatedContent } from '../../shared/update-mode.js';
 import {
   stripTopFolder,
   isUnsafeRelativePath,
@@ -185,6 +187,8 @@ function readForm() {
     cover: coverFile ? coverFile.relativePath : $('cover').value.trim(),
     consoleFile: $('consoleFile').files[0]?.name ?? '',
     mindmapFile: $('mindmapFile').files[0]?.name ?? '',
+    // W2-b：显式更新开关；随 prepare 一起送 Worker 做权威校验（前端挡不住 draft 重名）
+    isUpdate: $('isUpdate').checked,
   };
 }
 
@@ -320,6 +324,18 @@ async function submit() {
     // 行为断言基线：上架前先记下浏览端卡片数
     const before = await fetchJSON('/api/modules');
     const baseline = (before.modules ?? []).length;
+    const beforeRow = (before.modules ?? []).find((m) => m.slug === meta.slug) ?? null;
+
+    // W2-b 第一道（前端预检）：浏览端列表只含 published，发现同名且未勾选就本地挡下。
+    // 草稿（draft）不出现在列表里，这类重名由 Worker 权威校验兜底（第二道），不假装前端全挡住。
+    const frontDecision = decideUploadMode({ exists: !!beforeRow, isUpdate: meta.isUpdate });
+    if (!frontDecision.allowed) {
+      return showBad('同 slug 已存在，未勾选「模组更新」', [
+        `网址代称 ${meta.slug} 已在浏览端存在；未勾选时不允许覆盖，索引未改动`,
+        '若这是修订，请勾选「模组更新」后重新提交；否则请换一个 slug',
+        '注意：草稿条目不出现在浏览端列表，这类重名由 Worker 权威校验兜底',
+      ]);
+    }
 
     const prep = await postJSON('/api/upload/prepare', {
       ...meta,
@@ -353,22 +369,42 @@ async function submit() {
       return showBad('上架未完成', [fin.error ?? `HTTP ${fin.httpStatus}`, ...(fin.details ?? [])]);
     }
 
-    // 关键断言（P-05 / V-01）：上传回执成功 ≠ 浏览端多了一张卡，必须重新拉列表核实
+    // 关键断言（P-05 / V-01 / D-01）：回执成功 ≠ 浏览端真的更新了，必须重新拉列表核实。
+    // created 仍用「卡片 +1」；updated 用「卡片数不变、内容已更新」；状态变化按旧状态算 ±1。
     const after = await fetchJSON('/api/modules');
     const list = after.modules ?? [];
+    const mode = fin.mode === 'updated' ? 'updated' : 'created';
+    const previousStatus = fin.previousStatus ?? null;
     const published = meta.status === 'published';
-    const expected = published ? baseline + 1 : baseline;
+    const delta = expectedCardDelta({ mode, previousStatus, nextStatus: meta.status });
+    const expected = baseline + delta;
     const present = list.some((m) => m.slug === prep.slug);
-    if (list.length !== expected || present !== published) {
-      return showBad('索引未更新：上传回执成功但浏览端卡片数未变化', [
-        `期望 ${expected} 张卡片，实际 ${list.length}；slug 是否出现＝${present}`,
-      ]);
+    const afterRow = list.find((m) => m.slug === prep.slug) ?? null;
+    const failures = [];
+    if (list.length !== expected) {
+      failures.push(`期望 ${expected} 张卡片（变化 ${delta >= 0 ? '+' : ''}${delta}），实际 ${list.length}`);
+    }
+    if (present !== published) {
+      failures.push(`slug 是否出现在浏览端＝${present}，与 status=${meta.status} 不符`);
+    }
+    if (mode === 'updated') {
+      const content = verifyUpdatedContent({ row: afterRow, submitted: meta });
+      if (!content.ok) failures.push(...content.mismatches.map((m) => `内容未更新：${m}`));
+    }
+    if (failures.length) {
+      return showBad('索引未更新：上传回执成功但浏览端未按预期变化', failures);
     }
 
-    showOk(
-      published
+    const okTitle = mode === 'updated'
+      ? (delta === 0
+          ? `更新成功：${prep.slug} · 卡片数不变、内容已更新（${baseline} → ${list.length}）`
+          : `更新成功：${prep.slug} · 内容已更新 · 状态变化使卡片数 ${delta >= 0 ? '+' : ''}${delta}（${baseline} → ${list.length}）`)
+      : published
         ? `上架成功：${prep.slug} · 浏览端卡片 +1（${baseline} → ${list.length}）`
-        : `草稿已保存：${prep.slug} · 浏览端不出现（卡片数不变）`,
+        : `草稿已保存：${prep.slug} · 浏览端不出现（卡片数不变）`;
+
+    showOk(
+      okTitle,
       [
         `主控台实际引用 ${refs.local.length} 个本地资源，均已在包内`,
         `绝对外链 ${refs.external.length} 个保持原样，不纳入存在性断言`,
@@ -378,6 +414,7 @@ async function submit() {
         ...(coverRel
           ? [`本地封面已上传：${coverRel}（落条目根，体积计入成本闸门；外链未使用）`]
           : []),
+        `模式：${mode === 'updated' ? '覆盖更新' : '新建'}${mode === 'updated' && !afterRow ? '（条目为草稿，浏览端不可见；以 Worker D1 写后读回校验为准）' : ''}`,
         `已写入对象 ${fin.objectCount} 个 / ${((fin.totalBytes ?? 0) / 1024 / 1024).toFixed(1)} MB，D1 写后读回校验通过`,
         ...(refs.rootRelative.length
           ? [`⚠ 检出根相对路径 ${refs.rootRelative.join('、')}，属 §0.6 未验风险，请真机确认是否可达`]
