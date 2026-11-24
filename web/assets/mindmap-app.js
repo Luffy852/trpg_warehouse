@@ -82,7 +82,7 @@ async function main() {
     return fail('解析结果为空，未拿到任何工作表');
   }
 
-  statusEl.textContent = `✓ ${formatLabel} · ${sheets.length} 个工作表 · 只读预览（滚轮缩放 / 拖拽平移 / 点击折叠）`;
+  statusEl.textContent = `✓ ${formatLabel} · ${sheets.length} 个工作表 · 只读预览（Ctrl / ⌘ + 滚轮缩放 / 拖拽平移 / 点击折叠）`;
   statusEl.classList.remove('error');
   fallbackEl.hidden = true;
 
@@ -95,7 +95,10 @@ async function main() {
     allowUndo: false,
     toolBar: true,
     overflowHidden: false,
-    scaleSensitivity: 1,
+    // 缩放步进须落在库的 scaleMin=0.2 ~ scaleMax=1.4 区间内：旧步进 1 会让
+    // 右下角 +/- 求 scale(2)/scale(0)，Ctrl/⌘+滚轮同理，都被上下限直接拦掉。
+    // 保留库默认输入通路（按键+滚轮缩放 / 普通滚轮与拖动平移 / 双指 pinch），不接管 handleWheel。
+    scaleSensitivity: 0.1,
   });
 
   mind.init(convertXmindToMindElixir(sheets[0]));

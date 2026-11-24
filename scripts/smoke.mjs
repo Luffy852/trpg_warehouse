@@ -436,6 +436,30 @@ check('迁移与部署指引都包含 upload_locks 预留量表（纯点击建�
   assert.ok(guide.includes('WRITES_ENABLED'));
 });
 
+// ---------- 预览页缩放（B 方案：只修步进 + 文案，保留库默认全端输入通路）----------
+check('预览页缩放步进回到库默认量级 0.1（+/- 与 Ctrl/⌘+滚轮不再被 scaleMin/scaleMax 拦掉）', () => {
+  const app = readFileSync(join(ROOT, 'web/assets/mindmap-app.js'), 'utf8');
+  assert.ok(app.includes('scaleSensitivity: 0.1'), '步进应为 0.1：1 会让 +/- 求 scale(2)/scale(0) 撞库上下限 1.4/0.2');
+  assert.ok(!app.includes('scaleSensitivity: 1'), '旧值 scaleSensitivity: 1 应移除');
+});
+check('状态行文案与库默认滚轮行为一致：Ctrl / ⌘ + 滚轮缩放', () => {
+  const app = readFileSync(join(ROOT, 'web/assets/mindmap-app.js'), 'utf8');
+  assert.ok(app.includes('Ctrl / ⌘ + 滚轮缩放'), '状态行应说明需要按键，不能只写「滚轮缩放」');
+  assert.ok(!app.includes('只读预览（滚轮缩放 /'), '旧文案会误导用户以为裸滚轮能缩放');
+});
+check('缩放修正不接管滚轮 / 触摸输入通路（电脑端与移动端互不干扰）', () => {
+  const app = readFileSync(join(ROOT, 'web/assets/mindmap-app.js'), 'utf8');
+  const vendor = readFileSync(join(ROOT, 'web/vendor/mindmap.js'), 'utf8');
+  // B 方案不自定义 handleWheel：Ctrl/⌘+滚轮缩放、普通滚轮平移、双指 pinch、单指/鼠标拖动平移全留给库
+  // 只查「配置键」，不查注释里的技术说明文字
+  assert.ok(!/\bhandleWheel\s*:/.test(app), '不应自定义 handleWheel 配置，否则会覆盖库默认的平移 / pinch 通路');
+  assert.ok(!/\bscaleMax\s*:/.test(app) && !/\bscaleMin\s*:/.test(app), '不擅自改库缩放上下限（1.4 / 0.2）');
+  assert.ok(vendor.includes('y.ctrlKey||y.metaKey'), '库默认 Ctrl/⌘ + 滚轮缩放通路应保留');
+  assert.ok(vendor.includes('t.scale(t.scaleVal*C'), '库默认双指 pinch 缩放通路应保留');
+  assert.ok(vendor.includes('ptState=l.Pan'), '库默认点按拖动平移通路应保留');
+  assert.ok(vendor.includes('t.scaleVal-t.scaleSensitivity'), '右下角 +/- 按钮应仍走库默认步进');
+});
+
 // ---------- 汇总 ----------
 console.log(`\n=== 通过 ${results.length} 项断言 ===`);
 console.log(`
