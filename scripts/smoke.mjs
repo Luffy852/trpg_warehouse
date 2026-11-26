@@ -1130,6 +1130,20 @@ check('W3 技术文案复验：前台 footer / 入口小字改成人话，上传
   assert.ok(uploadHtml.includes('平铺在条目根目录；原始文件名写进索引 consoleFile'), '三区输入操作指引不动');
 });
 
+check('W3 调节轮 ①：首页顶部不再挂「点击浏览」说明，页脚非技术提示保留', () => {
+  assert.ok(!w3HomeHtml.includes('<span>点击浏览</span>'), 'brand 右侧说明应移除（用户图1 红框）');
+  assert.ok(w3HomeHtml.includes('公开只读 · 点击浏览即可查看模组。'), '页脚提示保留，别把整站说明一刀切删掉');
+  assert.ok(w3HomeHtml.includes('<h1>TRPG 模组库</h1>'), '主标题不受影响');
+});
+
+check('W3 调节轮 ②：卡片模组名区收紧到约 40px，同行卡片不再互相拉伸出大块留白', () => {
+  assert.ok(w3css.includes('align-items: start; }'), 'grid 行高不拉伸卡片');
+  assert.ok(w3css.includes('min-height: 40px'), '单行文字区高度对齐用户绿框示意');
+  assert.ok(w3css.includes('padding: 8px 12px'), '上下留白收紧');
+  assert.ok(!w3css.includes('padding: 12px 12px 14px'), '旧的大留白必须移除');
+  assert.ok(w3css.includes('min-height: 36px'), '窄屏同步收紧');
+});
+
 check('W3：改过的前端源码必须连带重出 vendor（防线上与源码口径分叉）', () => {
   // esbuild 默认把中文转义成 \uXXXX，故用 minify 后仍稳定、且旧产物里没有的 ASCII 标记
   assert.ok(w3SiteVendor.includes('card__art'), 'site.js 应含新卡片结构（旧产物没有）');
@@ -1147,7 +1161,10 @@ check('W3 先红后绿：回退 5 列 / 3:4 / 新标签 / 返回按钮 / 两组�
   assert.ok(!'<a class="entry" href="${escapeHtml(mindmapUrl)}">'.includes('target="_blank"'), '旧导图入口会红');
   assert.ok(!'<h1>思维导图预览</h1>'.includes('id="mapTitle"'), '旧标题会红');
   assert.ok(!'other</option>'.includes('建议模组名标记'), '旧 other 文案会红');
+  assert.ok('<div class="brand"><h1>TRPG 模组库</h1><span>点击浏览</span></div>'.includes('<span>点击浏览</span>'), '旧顶部说明会红');
+  assert.ok('padding: 12px 12px 14px' !== 'padding: 8px 12px; min-height: 40px', '旧大留白会红');
   assert.ok(w3css.includes('repeat(5, minmax(0, 1fr))') && w3css.includes('aspect-ratio: 3 / 4'), '还原后应变绿');
+  assert.ok(w3css.includes('align-items: start') && w3css.includes('min-height: 40px'), '调节轮还原后应变绿');
   assert.ok(siteApp.includes('target="_blank" rel="noopener"') && mmApp.includes('mind.scaleFit?.()'));
 });
 
