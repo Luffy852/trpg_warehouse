@@ -20,13 +20,16 @@ const MB = 1024 * 1024;
 const GB = 1024 * MB;
 
 // 默认阈值：可在 wrangler.toml 的 [vars] 里改（纯点击改配置，不必改代码）。
-// 8 GB 是给 10 GB 免费存储留 2 GB 余量；200 MB/条目按「美术资源包」量级取，
-// 超过就说明该走别的分发方式，不该塞进公开只读库。
+// 用户 R10：R2 可能与另一个项目共用 → 本项目 `modules/` 这部分自限 **5 GB**，
+// 给另一个项目留额度。注意 R2 Free 的 10 GB-month 是**按整个桶**算的，
+// 这个 5 GB 是本项目写口自己记的账本闸门（modules 聚合），不是云端硬隔离；
+// 两个项目合起来是否超 10 GB，需要双方各自的限额一起守住。
+// 200 MB/条目按「美术资源包」量级取，超过就说明该走别的分发方式，不该塞进公开只读库。
 export const COST_GUARD_DEFAULTS = Object.freeze({
   maxSingleFileBytes: 50 * MB,
   maxEntryBytes: 200 * MB,
   maxFilesPerEntry: 500,
-  bucketCapBytes: 8 * GB,
+  bucketCapBytes: 5 * GB,
 });
 
 function positiveInt(value, fallback, min, max) {
@@ -44,7 +47,7 @@ export function readCostGuards(vars = {}) {
     maxSingleFileBytes: positiveInt(vars.MAX_SINGLE_FILE_MB, 50, 1, 512) * MB,
     maxEntryBytes: positiveInt(vars.MAX_ENTRY_MB, 200, 1, 2048) * MB,
     maxFilesPerEntry: positiveInt(vars.MAX_FILES_PER_ENTRY, 500, 1, 2000),
-    bucketCapBytes: positiveInt(vars.BUCKET_CAP_GB, 8, 1, 10) * GB,
+    bucketCapBytes: positiveInt(vars.BUCKET_CAP_GB, 5, 1, 10) * GB,
   };
 }
 
@@ -126,7 +129,7 @@ export function projectedUsage(usedBytes, replacingBytes, incomingBytes) {
 
 export function exceedsBucketCap(projectedBytes, capBytes) {
   // 用 arguments.length 区分「没传（用默认）」与「显式传了 undefined（不可信）」，
-  // 避免默认参数把 undefined 悄悄变成 8GB 而放行。
+  // 避免默认参数把 undefined 悄悄变成默认闸门（5GB）而放行。
   const cap = arguments.length > 1 ? capBytes : COST_GUARD_DEFAULTS.bucketCapBytes;
   if (!Number.isFinite(cap) || cap <= 0 || !Number.isFinite(projectedBytes)) return true;
   return projectedBytes > cap;

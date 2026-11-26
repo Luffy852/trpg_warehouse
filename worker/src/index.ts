@@ -7,7 +7,16 @@ import { presignPut } from './presign';
 import { signToken, verifyToken } from './token';
 import { validateMeta } from '../../shared/contract.js';
 import { decideUploadMode } from '../../shared/update-mode.js';
-import { sortAdminRows, canPublish, canUnpublish } from '../../shared/admin.js';
+import {
+  sortAdminRows,
+  canPublish,
+  canUnpublish,
+  matchesDeleteConfirm,
+  storageSnapshot,
+  slugFromR2Key,
+  isOrphanR2Key,
+  MODULE_KEY_PREFIX,
+} from '../../shared/admin.js';
 import { isUnsafeRelativePath, findDuplicateNames, buildUploadPlan } from '../../shared/paths.js';
 import { extractReferences, buildAvailableSet, findMissingDeps } from '../../shared/deps.js';
 import {
@@ -55,7 +64,8 @@ export default {
       if (path === '/api/modules' && request.method === 'GET') return await handleModules(env);
 
       // ── W2-c · 模组管理台（全部在 /api/upload* 这条已受 Access 保护的 path 下）──
-      // 全量列表含 draft；上架 / 下架写口只改 status，不动 R2 / upload_locks / 容量账。
+      // 全量列表含 draft；上架 / 下架只改 status；删除 / 校准是人触发的一次性写口。
+      // 列表只读一张静态快照，绝不在这里翻 R2（用户 R8：数据是静态的，不是每次访问都读取）。
       if (path === '/api/upload/admin/modules' && request.method === 'GET') {
         await requireAccess(request, env);
         return await handleAdminModules(env);
@@ -67,6 +77,14 @@ export default {
       if (path === '/api/upload/admin/unpublish' && request.method === 'POST') {
         await requireAccess(request, env);
         return await handleAdminUnpublish(request, env);
+      }
+      if (path === '/api/upload/admin/delete' && request.method === 'POST') {
+        await requireAccess(request, env);
+        return await handleAdminDelete(request, env);
+      }
+      if (path === '/api/upload/admin/calibrate' && request.method === 'POST') {
+        await requireAccess(request, env);
+        return await handleAdminCalibrate(env);
       }
 
       if (path === '/api/upload/prepare' && request.method === 'POST') {
@@ -116,13 +134,23 @@ async function handleModules(env: Env): Promise<Response> {
   return json({ modules });
 }
 
-// W2-c 第 1 步：受保护全量列表。前台 /api/modules 一个字不改、仍只返 published。
+// W2-c：受保护全量列表。前台 /api/modules 一个字不改、仍只返 published。
 // 排序走 shared/admin.js 唯一口径（体系序 → slug A→Z）；返回体不含资源包清单。
+// storage 是「上次校准」留下的静态快照：这里只读一行 D1，不翻 R2、不算用量（用户 R8）。
 async function handleAdminModules(env: Env): Promise<Response> {
   const { results } = await env.DB.prepare(
     `SELECT slug, title, system, kind, summary, cover, status, console_file, mindmap_file, created_at
      FROM modules`,
   ).all<ModuleRow>();
+  let snapshotRow: { total_bytes: number; calibrated_at: string } | null = null;
+  try {
+    snapshotRow = await env.DB.prepare(
+      'SELECT total_bytes, calibrated_at FROM admin_storage WHERE id = 1',
+    ).first<{ total_bytes: number; calibrated_at: string }>();
+  } catch {
+    // 还没校准过 → 表尚未建；顶部模块显示「尚未校准」，不阻断列表
+    snapshotRow = null;
+  }
   const base = env.R2_PUBLIC_BASE_URL.replace(/\/+$/, '');
   const modules = sortAdminRows(results ?? []).map((row) => ({
     slug: row.slug,
@@ -138,7 +166,7 @@ async function handleAdminModules(env: Env): Promise<Response> {
     baseUrl: `${base}/modules/${encodeURIComponent(row.slug)}/`,
     createdAt: row.created_at,
   }));
-  return json({ modules });
+  return json({ modules, storage: storageSnapshot(snapshotRow) });
 }
 
 // W2-c 第 1 步：单字段改 status（draft → published），不重传文件、不动 R2、不动容量账。
@@ -233,6 +261,205 @@ async function handleAdminUnpublish(request: Request, env: Env): Promise<Respons
     slug,
     status: 'draft',
     previousStatus: row.status,
+    verified: true,
+  });
+}
+
+// ── W2-c 第 3 步 · 人触发的一次性 R2 列举 ──────────────────────────────────
+// §0.5 禁「自动定时遍历」；用户 R3-4 明确授权「人手动点一次、当场翻一次，绝对可控」。
+// 这个 helper 只被 handleAdminDelete / handleAdminCalibrate 调用，绝不出现在
+// scheduled / Cron / alarm / setInterval / 每次请求路径里（沙盒有白名单断言）。
+interface AdminBucketObject {
+  key: string;
+  size: number;
+}
+
+// 共用 R2（用户 R10）：删除传 `modules/<slug>/`，校准传 `modules/`。
+// 两个调用都带前缀，别的项目 / 桶根对象连列表都进不来，更不会被删或算进规模。
+async function listAdminBucketObjects(env: Env, prefix: string): Promise<AdminBucketObject[]> {
+  const out: AdminBucketObject[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await env.ASSETS_BUCKET.list({ prefix, limit: 1000, cursor });
+    for (const obj of page.objects) out.push({ key: obj.key, size: obj.size });
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+  return out;
+}
+
+// 顶部校准模块要显示「上次校准后的静态值 + 日期」，必须有个地方存快照。
+// 用 Worker 在点「校准」时幂等建一张单行表：纯点击部署，不用去 D1 Studio 手跑 SQL。
+// 列表接口只读这一行；表不存在（还没校准过）就显示「尚未校准」。
+async function ensureAdminStorageTable(env: Env): Promise<void> {
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS admin_storage (
+       id            INTEGER PRIMARY KEY CHECK (id = 1),
+       total_bytes   INTEGER NOT NULL,
+       calibrated_at TEXT NOT NULL
+     )`,
+  ).run();
+}
+
+// W2-c 第 3 步：删除＝资料卡 + 该 slug 的全部 R2 文件一起清掉（不可逆）。
+// 用户 R7 定稿：手打 slug 确认、草稿与已发布都要打、先清文件后删卡、失败可重试。
+// 删除时不动容量账（R4-5「删除不划账」）：残留预留留给「校准」统一清。
+async function handleAdminDelete(request: Request, env: Env): Promise<Response> {
+  if (!isWritesEnabled(env)) {
+    return json({ error: '写口已熔断，暂停删除（成本保护）', code: 'WRITES_DISABLED' }, 503);
+  }
+  const body = (await request.json().catch(() => null)) as
+    { slug?: string; confirmSlug?: string } | null;
+  const slug = typeof body?.slug === 'string' ? body.slug : '';
+  if (!slug) return json({ error: '缺少 slug', code: 'BAD_REQUEST' }, 400);
+  // 手打确认由 Worker 权威校验：绕过前端直接打接口也挡得住
+  if (!matchesDeleteConfirm(slug, body?.confirmSlug)) {
+    return json(
+      { error: '手打的 slug 与条目不一致，未删除', code: 'CONFIRM_MISMATCH' },
+      400,
+    );
+  }
+  const row = await env.DB.prepare('SELECT status FROM modules WHERE slug = ?')
+    .bind(slug)
+    .first<{ status: string }>();
+  if (!row) return json({ error: '条目不存在', code: 'NOT_FOUND' }, 404);
+
+  // ① 先把仓库文件清干净：R2 没有目录对象，只能按前缀列举后逐个删。
+  const objects = await listAdminBucketObjects(env, `modules/${slug}/`);
+  let deleted = 0;
+  const remaining: string[] = [];
+  for (const obj of objects) {
+    try {
+      await env.ASSETS_BUCKET.delete(obj.key);
+      deleted += 1;
+    } catch {
+      remaining.push(obj.key);
+    }
+  }
+  // ② 中途失败：资料卡保留、管理台还看得见，重试会重新列举、接着删剩下的。
+  if (remaining.length) {
+    return json(
+      {
+        ok: false,
+        error: '部分文件未删除，资料卡已保留，可重试',
+        code: 'PARTIAL_DELETE',
+        deleted,
+        remaining,
+      },
+      409,
+    );
+  }
+  // ③ 全部成功后才删资料卡；写后读回断言。
+  await env.DB.prepare('DELETE FROM modules WHERE slug = ?').bind(slug).run();
+  const after = await env.DB.prepare('SELECT slug FROM modules WHERE slug = ?')
+    .bind(slug)
+    .first<{ slug: string }>();
+  if (after) {
+    return json({ error: '资料卡删除校验失败', code: 'INDEX_VERIFY_FAILED' }, 500);
+  }
+
+  return json({
+    ok: true,
+    slug,
+    previousStatus: row.status,
+    deletedObjects: deleted,
+    verified: true,
+  });
+}
+
+// W2-c 第 3 步：校准＝人点一次、当场翻一次 **modules/ 前缀**，把该前缀下没索引的
+// 垃圾对象真删掉，再把账本对齐到清完后的真实占用，最后写静态快照（R8 / R9 / R10）。
+// R9：不能把孤儿量记回账本当兜账值 —— 只把账抬高迁就垃圾，R2 一点没变小。
+// R10：R2 可能与另一个项目共用 → 列举 / 删除 / 算规模一律只碰 `modules/` 前缀；
+//      顶部「仓库规模」与 5GB 容量闸门算的都是**本项目这部分**，不含别的项目对象。
+// 顺序：删孤儿 → 对齐账本 → 写快照（「先更新账本值，再更新前端静态值」仍成立）。
+async function handleAdminCalibrate(env: Env): Promise<Response> {
+  if (!isWritesEnabled(env)) {
+    return json({ error: '写口已熔断，暂停校准（成本保护）', code: 'WRITES_DISABLED' }, 503);
+  }
+  await ensureAdminStorageTable(env);
+
+  // 只翻本项目前缀：共用桶里别的项目对象连列表都进不来（R10）
+  const objects = await listAdminBucketObjects(env, MODULE_KEY_PREFIX);
+  const { results } = await env.DB.prepare('SELECT slug FROM modules').all<{ slug: string }>();
+  const rows = results ?? [];
+  const slugs = new Set(rows.map((r) => r.slug));
+
+  // ① 孤儿 = modules/ 前缀下没有现存 slug 索引、前端拉不到的对象
+  //    （半途放弃的上传 / 删除残留 / 前缀内格局不合法的散对象）。直接清掉，
+  //    不留、也不记回账本。中途失败保留现场，可点重试。
+  const orphans = objects.filter((o) => isOrphanR2Key(o.key, slugs));
+  let deletedOrphans = 0;
+  const remaining: string[] = [];
+  for (const obj of orphans) {
+    try {
+      await env.ASSETS_BUCKET.delete(obj.key);
+      deletedOrphans += 1;
+    } catch {
+      remaining.push(obj.key);
+    }
+  }
+  if (remaining.length) {
+    return json(
+      {
+        ok: false,
+        error: '部分无索引对象未删除，本次未改账本，可重试',
+        code: 'PARTIAL_CALIBRATE',
+        deletedOrphans,
+        remaining,
+      },
+      409,
+    );
+  }
+
+  // ② 用「清完之后剩下的对象」重算**本项目**真实占用。它们全都能映射到现存 slug，
+  //    所以 SUM(modules.total_bytes) 一定 === totalBytes，不需要任何兜账预留。
+  //    别的项目对象不在列举范围内，自然不会混进这个数（R10）。
+  const survivors = objects.filter((o) => !isOrphanR2Key(o.key, slugs));
+  const totalBytes = survivors.reduce((sum, o) => sum + o.size, 0);
+  const bySlug = new Map<string, number>();
+  for (const obj of survivors) {
+    const slug = slugFromR2Key(obj.key);
+    if (!slug) continue; // 双保险：无法映射的对象不该留到这一步
+    bySlug.set(slug, (bySlug.get(slug) ?? 0) + obj.size);
+  }
+
+  // ③ 账本逐条对齐到真实体积（先更新系统里的账本值）
+  for (const r of rows) {
+    await env.DB.prepare('UPDATE modules SET total_bytes = ? WHERE slug = ?')
+      .bind(bySlug.get(r.slug) ?? 0, r.slug)
+      .run();
+  }
+  // 陈旧预留是为这些垃圾记的，垃圾已清 → 全清，不留任何聚合孤儿值。
+  const locks = await env.DB.prepare('SELECT COUNT(*) AS n FROM upload_locks')
+    .first<{ n: number }>();
+  await env.DB.prepare('DELETE FROM upload_locks').run();
+
+  // ④ 写静态快照（再更新前端那份值）：只有手动点校准会更新它，页面访问绝不重算
+  const clock = await env.DB.prepare("SELECT datetime('now') AS now")
+    .first<{ now: string }>();
+  const calibratedAt = clock?.now ?? '';
+  await env.DB.prepare(
+    `INSERT INTO admin_storage (id, total_bytes, calibrated_at) VALUES (1, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       total_bytes = excluded.total_bytes, calibrated_at = excluded.calibrated_at`,
+  )
+    .bind(totalBytes, calibratedAt)
+    .run();
+
+  const check = await env.DB.prepare(
+    'SELECT total_bytes, calibrated_at FROM admin_storage WHERE id = 1',
+  ).first<{ total_bytes: number; calibrated_at: string }>();
+  if (!check || check.total_bytes !== totalBytes) {
+    return json({ error: '校准写入校验失败', code: 'INDEX_VERIFY_FAILED' }, 500);
+  }
+
+  return json({
+    ok: true,
+    totalBytes,
+    calibratedAt,
+    objectCount: survivors.length,
+    deletedOrphans,
+    clearedLocks: locks?.n ?? 0,
     verified: true,
   });
 }

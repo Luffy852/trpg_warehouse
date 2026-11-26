@@ -25,11 +25,12 @@ const goodSizes = () => ({
   'assets/maps/深层/地图 01.png': 4 * MB,
 });
 
-test('默认闸门：50MB 单文件 / 200MB 条目 / 500 文件 / 8GB 桶容量', () => {
+test('默认闸门：50MB 单文件 / 200MB 条目 / 500 文件 / 5GB 本项目容量（R10 共用桶自限）', () => {
   assert.equal(COST_GUARD_DEFAULTS.maxSingleFileBytes, 50 * MB);
   assert.equal(COST_GUARD_DEFAULTS.maxEntryBytes, 200 * MB);
   assert.equal(COST_GUARD_DEFAULTS.maxFilesPerEntry, 500);
-  assert.equal(COST_GUARD_DEFAULTS.bucketCapBytes, 8 * GB);
+  assert.equal(COST_GUARD_DEFAULTS.bucketCapBytes, 5 * GB);
+  assert.equal(readCostGuards({}).bucketCapBytes, 5 * GB, 'wrangler vars 缺省时也必须落 5GB');
 });
 
 test('readCostGuards：从 wrangler vars 读 MB/GB，非法值回退、超过 10GB 被钳制', () => {
@@ -85,15 +86,15 @@ test('projectedUsage：同 slug 修订要减掉旧体积，不能重复计', () 
 });
 
 test('exceedsBucketCap：等于 cap 放行，超 1 字节就拒', () => {
-  assert.equal(exceedsBucketCap(8 * GB, 8 * GB), false);
-  assert.equal(exceedsBucketCap(8 * GB + 1, 8 * GB), true);
+  assert.equal(exceedsBucketCap(5 * GB, 5 * GB), false);
+  assert.equal(exceedsBucketCap(5 * GB + 1, 5 * GB), true);
 });
 
 test('先红后绿：把桶容量闸门调大，同一份超限输入就会放行', () => {
-  const used = 7.9 * GB;
+  const used = 4.9 * GB;
   const incoming = 0.2 * GB;
   const projected = projectedUsage(used, 0, incoming);
-  assert.equal(exceedsBucketCap(projected, 8 * GB), true, '8GB 闸门必须拦住');
+  assert.equal(exceedsBucketCap(projected, 5 * GB), true, '5GB 闸门必须拦住');
   assert.equal(exceedsBucketCap(projected, 10 * GB), false, '闸门回退后断言真的会变绿');
 });
 
@@ -122,18 +123,18 @@ test('一键熔断：只有显式 WRITES_ENABLED="0" 才关写口，缺省保持
 });
 
 test('令牌完整性：旧版令牌缺成本字段一律拒，不能当作 0 放行', () => {
-  const complete = { declaredTotalBytes: 10 * MB, bucketCapBytes: 8 * GB, keys: [], exp: 1 };
+  const complete = { declaredTotalBytes: 10 * MB, bucketCapBytes: 5 * GB, keys: [], exp: 1 };
   assert.deepEqual(assertCostToken(complete), []);
   assert.ok(assertCostToken({ keys: [], exp: 1 }).length >= 2);
   assert.ok(assertCostToken(null).length >= 1);
-  assert.ok(assertCostToken({ declaredTotalBytes: '大', bucketCapBytes: 8 * GB }).length >= 1);
+  assert.ok(assertCostToken({ declaredTotalBytes: '大', bucketCapBytes: 5 * GB }).length >= 1);
 });
 
 test('fail-closed：用量数字不可信时 projectedUsage 返回 Infinity，容量锁必定拦下', () => {
   assert.equal(projectedUsage(undefined, 0, 1 * MB), Number.POSITIVE_INFINITY);
   assert.equal(projectedUsage(7 * GB, NaN, 1 * MB), Number.POSITIVE_INFINITY);
-  assert.equal(exceedsBucketCap(Number.POSITIVE_INFINITY, 8 * GB), true);
-  assert.equal(exceedsBucketCap(NaN, 8 * GB), true);
+  assert.equal(exceedsBucketCap(Number.POSITIVE_INFINITY, 5 * GB), true);
+  assert.equal(exceedsBucketCap(NaN, 5 * GB), true);
   assert.equal(exceedsBucketCap(1 * MB, undefined), true);
 });
 
@@ -152,9 +153,9 @@ test('fail-closed：head().size 不可用或声明体积不可信 → 拒写索�
 });
 
 test('先红后绿：预留量只增不减，放弃上传后容量锁宁可提前拦死', () => {
-  const used = 7.5 * GB;
+  const used = 4.5 * GB;
   const reserved = 0.6 * GB; // 上一次 prepare 签了 URL 但没 finalize，预留永久留下
-  assert.equal(exceedsBucketCap(projectedUsage(used + reserved, 0, 0.1 * GB), 8 * GB), true);
+  assert.equal(exceedsBucketCap(projectedUsage(used + reserved, 0, 0.1 * GB), 5 * GB), true);
   // 若把预留量误当 0（旧版设计），同一份输入会错误放行
-  assert.equal(exceedsBucketCap(projectedUsage(used, 0, 0.1 * GB), 8 * GB), false);
+  assert.equal(exceedsBucketCap(projectedUsage(used, 0, 0.1 * GB), 5 * GB), false);
 });

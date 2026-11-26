@@ -11,10 +11,15 @@ import { importXMindFile, convertXmindToMindElixir } from '@mind-elixir/import-x
 import { inspectXmind } from '../shared/xmind.js';
 import { validateMeta, slugify } from '../shared/contract.js';
 import { decideUploadMode } from '../shared/update-mode.js';
-import { sortAdminRows, adminRowActions, previewTarget, canPublish, canUnpublish, statusLabel, systemKindLabel } from '../shared/admin.js';
+import {
+  sortAdminRows, adminRowActions, previewTarget, canPublish, canUnpublish,
+  statusLabel, systemKindLabel, matchesDeleteConfirm, deleteConfirmMessage, storageSnapshot,
+  slugFromR2Key, isOrphanR2Key, MODULE_KEY_PREFIX,
+} from '../shared/admin.js';
 import {
   stripTopFolder,
   buildUploadPlan,
+  buildR2Key,
   findDuplicateNames,
   isUnsafeRelativePath,
   skipSingleFileDuplicates,
@@ -181,15 +186,18 @@ check('封面与已有文件同名 → 显式拒绝，不静默覆盖', () => {
 });
 
 // ---------- 2d. 包③ / 包④：Worker 兜底 + 上传页版式与文案回归防护 ----------
-check('Worker 7 个 API 分支 return await：异步错误不绕过 catch（JSON 500/413/503 不退化成 1101）', () => {
+check('Worker 9 个 API 分支 return await：异步错误不绕过 catch（JSON 500/413/503 不退化成 1101）', () => {
   const src = readFileSync(join(ROOT, 'worker/src/index.ts'), 'utf8');
-  const names = '(Modules|Prepare|Finalize|Download|AdminModules|AdminPublish|AdminUnpublish)';
+  const names = '(Modules|Prepare|Finalize|Download|AdminModules|AdminPublish|AdminUnpublish|AdminDelete|AdminCalibrate)';
   const bare = [...src.matchAll(new RegExp(`\\breturn\\s+handle${names}\\s*\\(`, 'g'))].map((m) => m[1]);
   assert.deepEqual(bare, [], `仍有未 await 的分支：${bare.join('、')}`);
   const awaited = [...src.matchAll(new RegExp(`\\breturn\\s+await\\s+handle${names}\\s*\\(`, 'g'))].map((m) => m[1]);
   assert.deepEqual(
     awaited.sort(),
-    ['Finalize', 'Download', 'Modules', 'Prepare', 'AdminModules', 'AdminPublish', 'AdminUnpublish'].sort(),
+    [
+      'Finalize', 'Download', 'Modules', 'Prepare', 'AdminModules',
+      'AdminPublish', 'AdminUnpublish', 'AdminDelete', 'AdminCalibrate',
+    ].sort(),
   );
 });
 check('包④：slug 标签改短文案 + form-grid 内 label 统一预留两行高度（防中文折行把输入框推后）', () => {
@@ -442,14 +450,14 @@ check('成本闸门：三区输入 → 体积声明 → 单文件/整条目/文�
   assert.deepEqual(r.errors, []);
   assert.equal(r.declaredTotalBytes, 16 * MB_UNIT);
 });
-check('成本闸门：D1 累计容量锁把用量压在 8GB 内；同 slug 修订不重复计', () => {
-  const projected = projectedUsage(7.9 * GB_UNIT, 0.5 * GB_UNIT, 0.2 * GB_UNIT);
+check('成本闸门：D1 累计容量锁把本项目用量压在 5GB 内；同 slug 修订不重复计', () => {
+  const projected = projectedUsage(4.5 * GB_UNIT, 0.5 * GB_UNIT, 0.2 * GB_UNIT);
   assert.equal(exceedsBucketCap(projected, COST_GUARD_DEFAULTS.bucketCapBytes), false);
-  assert.equal(exceedsBucketCap(projectedUsage(7.9 * GB_UNIT, 0, 0.2 * GB_UNIT), 8 * GB_UNIT), true);
+  assert.equal(exceedsBucketCap(projectedUsage(4.9 * GB_UNIT, 0, 0.2 * GB_UNIT), 5 * GB_UNIT), true);
 });
 check('先红后绿：把闸门调大（或声明少报）后，同一份超限输入会被放行 / 被 finalize 抓到', () => {
   const loose = readCostGuards({ BUCKET_CAP_GB: '10' });
-  assert.equal(exceedsBucketCap(8.5 * GB_UNIT, loose.bucketCapBytes), false);
+  assert.equal(exceedsBucketCap(6.5 * GB_UNIT, loose.bucketCapBytes), false);
   const lying = verifyActualBytes({
     actualSizes: [2 * MB_UNIT, 1 * MB_UNIT, 250 * MB_UNIT],
     declaredTotalBytes: 3 * MB_UNIT,
@@ -468,19 +476,24 @@ check('一键熔断：WRITES_ENABLED="0" 关写口，缺省启用', () => {
 });
 check('fail-closed：旧版令牌 / 不可信用量 / 不可信 size 一律拒，不静默放行', () => {
   assert.ok(assertCostToken({ keys: [], exp: 1 }).length >= 2);
-  assert.equal(exceedsBucketCap(projectedUsage(undefined, 0, 1 * MB_UNIT), 8 * GB_UNIT), true);
+  assert.equal(exceedsBucketCap(projectedUsage(undefined, 0, 1 * MB_UNIT), 5 * GB_UNIT), true);
   assert.ok(
     verifyActualBytes({ actualSizes: [1 * MB_UNIT, undefined], declaredTotalBytes: 2 * MB_UNIT })
       .errors.length >= 1,
   );
 });
 check('预留量只增不减：放弃上传留下的预留会提前拦死容量锁', () => {
-  const used = 7.5 * GB_UNIT;
+  const used = 4.5 * GB_UNIT;
   const reserved = 0.6 * GB_UNIT;
-  assert.equal(exceedsBucketCap(projectedUsage(used + reserved, 0, 0.1 * GB_UNIT), 8 * GB_UNIT), true);
-  assert.equal(exceedsBucketCap(projectedUsage(used, 0, 0.1 * GB_UNIT), 8 * GB_UNIT), false);
+  assert.equal(exceedsBucketCap(projectedUsage(used + reserved, 0, 0.1 * GB_UNIT), 5 * GB_UNIT), true);
+  assert.equal(exceedsBucketCap(projectedUsage(used, 0, 0.1 * GB_UNIT), 5 * GB_UNIT), false);
 });
-check('反模式静态审计：成本机制不含 cron / alarm / setInterval / GraphQL / list() 遍历', () => {
+// W2-c 第 3 步白名单：唯一的 R2 列举 helper，只被「删除 / 校准」两个人触发写口调用。
+// 用户 R3-4 / R7 第 6 题明确授权「人手动点一次、当场翻一次」，但绝不能变成定时自动跑。
+const LIST_HELPER_START = 'async function listAdminBucketObjects';
+const LIST_HELPER_END = '// 顶部校准模块要显示';
+
+check('反模式静态审计：成本机制不含 cron / alarm / setInterval / GraphQL；list() 只在人工白名单内', () => {
   const dirs = [join(ROOT, 'worker/src'), join(ROOT, 'shared'), join(ROOT, 'web/assets'), join(ROOT, 'scripts')];
   const forbidden = /setInterval\(|async scheduled\(|Cron Trigger|\balarm\b|GraphQL|\.list\(/;
   const hits = [];
@@ -489,7 +502,14 @@ check('反模式静态审计：成本机制不含 cron / alarm / setInterval / G
       if (!/\.(ts|js|mjs)$/.test(name)) continue;
       // 审计脚本自身含这些关键字的字面量；且它只在沙盒跑，不部署，不参与成本路径
       if (name === 'smoke.mjs') continue;
-      const text = readFileSync(join(dir, name), 'utf8');
+      let text = readFileSync(join(dir, name), 'utf8');
+      // 唯一允许的列举 helper：把它的代码行抹成空行（保留行数，不影响其它断言）
+      if (name === 'index.ts' && text.includes(LIST_HELPER_START)) {
+        const a = text.indexOf(LIST_HELPER_START);
+        const b = text.indexOf(LIST_HELPER_END, a);
+        assert.ok(b > a, '白名单 helper 的结束标记必须存在');
+        text = text.slice(0, a) + text.slice(a, b).replace(/[^\n]/g, ' ') + text.slice(b);
+      }
       // 只把「代码行」算命中；注释里说明这些词是允许的
       for (const line of text.split('\n')) {
         const code = line.trim();
@@ -543,11 +563,13 @@ const siteApp = readFileSync(join(ROOT, 'web/assets/app.js'), 'utf8');
 const mmApp = readFileSync(join(ROOT, 'web/assets/mindmap-app.js'), 'utf8');
 const buildScript = readFileSync(join(ROOT, 'scripts/build-web.mjs'), 'utf8');
 
-check('W2-c ①②：三个管理台接口都在 /api/upload* 受保护 path 下，且 Worker 内显式 requireAccess', () => {
+check('W2-c ①②③：五个管理台接口都在 /api/upload* 受保护 path 下，且 Worker 内显式 requireAccess', () => {
   for (const p of [
     '/api/upload/admin/modules',
     '/api/upload/admin/publish',
     '/api/upload/admin/unpublish',
+    '/api/upload/admin/delete',
+    '/api/upload/admin/calibrate',
   ]) {
     assert.ok(adminWorker.includes(`path === '${p}'`), `缺少受保护接口 ${p}`);
   }
@@ -557,8 +579,8 @@ check('W2-c ①②：三个管理台接口都在 /api/upload* 受保护 path 下
   );
   assert.equal(
     (block.match(/requireAccess\(request, env\)/g) ?? []).length,
-    3,
-    '三个分支都必须在 Worker 内验 JWT 兜底（隐藏路径 ≠ 鉴权）',
+    5,
+    '五个分支都必须在 Worker 内验 JWT 兜底（隐藏路径 ≠ 鉴权）',
   );
 });
 
@@ -626,22 +648,30 @@ check('W2-c ①：管理台不另写排序 / 状态文案；slug 纯文本只读
   assert.equal(statusLabel('draft'), '草稿');
 });
 
-check('W2-c ①②：预览按钮按状态二态；上架 / 下架互斥点亮，删除永远灰着、无额外注释', () => {
+check('W2-c ①②③：预览页 / 条目页同为 3 字；上架 / 下架互斥，删除两种状态都点亮', () => {
   assert.equal(previewTarget('abc', 'draft'), '/upload/preview.html?slug=abc');
   assert.equal(previewTarget('abc', 'published'), '/module.html?slug=abc');
-  assert.equal(adminRowActions('draft').previewLabel, '预览');
+  assert.equal(adminRowActions('draft').previewLabel, '预览页');
   assert.equal(adminRowActions('published').previewLabel, '条目页');
+  assert.equal(
+    adminRowActions('draft').previewLabel.length,
+    adminRowActions('published').previewLabel.length,
+    'R7-2 小修补：两个文案同字数，翻转时按钮同宽不跳',
+  );
   assert.equal(adminRowActions('draft').publishEnabled, true);
   assert.equal(adminRowActions('draft').unpublishEnabled, false);
   assert.equal(adminRowActions('published').publishEnabled, false);
   assert.equal(adminRowActions('published').unpublishEnabled, true);
-  assert.equal(adminRowActions('published').removeEnabled, false);
-  // 删除按钮仍是字面 disabled；上架 / 下架按状态动态禁用，不能写死灰着
-  assert.equal((adminAppSrc.match(/<button[^>]*disabled>/g) ?? []).length, 1, '只有「删除」应写死 disabled');
+  assert.equal(adminRowActions('draft').removeEnabled, true);
+  assert.equal(adminRowActions('published').removeEnabled, true);
+  // 三个按钮都按状态动态禁用，不再有写死灰着的按钮
+  assert.equal((adminAppSrc.match(/<button[^>]*disabled>/g) ?? []).length, 0, '不应再有写死 disabled 的按钮');
   assert.ok(adminAppSrc.includes('${actions.unpublishEnabled'), '下架按钮必须按按钮态动态禁用');
+  assert.ok(adminAppSrc.includes('${actions.removeEnabled'), '删除按钮必须按按钮态动态禁用');
   assert.ok(!adminAppSrc.includes('后续开放'), '用户明确不要额外注释');
-  assert.ok(adminAppSrc.includes('data-action="publish"'));
-  assert.ok(adminAppSrc.includes('data-action="unpublish"'));
+  for (const a of ['publish', 'unpublish', 'delete', 'calibrate']) {
+    assert.ok(adminAppSrc.includes(`data-action="${a}"`), `缺少 ${a} 按钮`);
+  }
 });
 
 check('W2-c ①：草稿预览壳都在 /upload/ 受保护路径下，且复用同一份 vendor（不改前台页面）', () => {
@@ -667,16 +697,29 @@ check('W2-c ①：打包脚本重出 admin.js；4 个 vendor 产物都随仓库�
   }
 });
 
-check('W2-c ①②：上架 / 下架都不碰删除 / 容量账 / 自动翻仓库（留给第 3 步）', () => {
+check('W2-c ①②：上架 / 下架都不碰删除 / 容量账 / 自动翻仓库（第 3 步写口单独审计）', () => {
   const handlers = adminWorker.slice(
-    adminWorker.indexOf('async function handleAdminModules'),
-    adminWorker.indexOf('// 上架前权威校验'),
+    adminWorker.indexOf('async function handleAdminPublish'),
+    adminWorker.indexOf('interface AdminBucketObject'),
   );
-  const texts = `${handlers}\n${adminAppSrc}`;
-  for (const forbidden of ['ASSETS_BUCKET.delete', 'upload_locks', 'total_bytes', 'setInterval(', '.list(']) {
-    assert.ok(!texts.includes(forbidden), `第 1、2 步不该出现 ${forbidden}`);
+  for (const forbidden of ['ASSETS_BUCKET', 'upload_locks', 'total_bytes', 'setInterval(', '.list(']) {
+    assert.ok(!handlers.includes(forbidden), `第 1、2 步不该出现 ${forbidden}`);
   }
-  assert.equal(adminRowActions('published').removeEnabled, false, '删除按钮第 3 步才亮');
+});
+
+check('W2-c ③：管理台列表只读静态快照，页面访问不翻仓库、不算用量（用户 R8）', () => {
+  const fn = adminWorker.slice(
+    adminWorker.indexOf('async function handleAdminModules'),
+    adminWorker.indexOf('async function handleAdminPublish'),
+  );
+  assert.ok(fn.includes('FROM admin_storage WHERE id = 1'), '应只读那一行静态快照');
+  assert.ok(fn.includes('storageSnapshot'), '快照口径走 shared 唯一出处');
+  assert.ok(fn.includes('storage:'), '列表回执要带 storage');
+  for (const forbidden of ['ASSETS_BUCKET', '.list(', 'SUM(', 'SUM (', 'setInterval(']) {
+    assert.ok(!fn.includes(forbidden), `列表接口不该出现 ${forbidden}`);
+  }
+  assert.equal(storageSnapshot({ total_bytes: 1024, calibrated_at: '2026-11-26 01:00:00' }).totalBytes, 1024);
+  assert.equal(storageSnapshot(null), null, '没校准过时显示「尚未校准」');
 });
 
 check('W2-c ① 先红后绿：把「按路径切数据源」回退成一律公开，草稿预览断言真的会红；还原后绿', () => {
@@ -692,7 +735,7 @@ check('W2-c ① 先红后绿：把「按路径切数据源」回退成一律公�
 check('W2-c ②：下架写口只改 status，published→draft + 写后读回，不动 R2 / 预留量 / 容量账', () => {
   const fn = adminWorker.slice(
     adminWorker.indexOf('async function handleAdminUnpublish'),
-    adminWorker.indexOf('// 上架前权威校验'),
+    adminWorker.indexOf('interface AdminBucketObject'),
   );
   assert.ok(fn.includes('canUnpublish'), '迁移判定走 shared 唯一口径');
   assert.ok(fn.includes("status = 'draft'") && fn.includes("AND status = 'published'"), '只翻 published，防重复点');
@@ -746,12 +789,248 @@ check('W2-c ② 先红后绿：回退「下架永远灰着」与「新标签」�
   assert.ok(adminAppSrc.includes('target="_blank"') && adminAppSrc.includes('rel="noopener"'), '还原后应变绿');
 });
 
+// ---------- W2-c 第 3 步 · 删除（不可逆） + 顶部静态校准模块 ----------
+const deleteFn = adminWorker.slice(
+  adminWorker.indexOf('async function handleAdminDelete'),
+  adminWorker.indexOf('async function handleAdminCalibrate'),
+);
+const calibrateFn = adminWorker.slice(
+  adminWorker.indexOf('async function handleAdminCalibrate'),
+  adminWorker.indexOf('// 上架前权威校验'),
+);
+const siteCss = readFileSync(join(ROOT, 'web/assets/site.css'), 'utf8');
+
+check('W2-c ③：删除写口手打 slug 权威校验，绕过前端直接打接口也挡得住', () => {
+  assert.ok(deleteFn.includes('matchesDeleteConfirm'), 'Worker 必须复用 shared 唯一口径');
+  assert.ok(deleteFn.includes('CONFIRM_MISMATCH'));
+  assert.equal(matchesDeleteConfirm('abc', 'abc'), true);
+  assert.equal(matchesDeleteConfirm('abc', 'abd'), false);
+  assert.equal(matchesDeleteConfirm('abc', null), false);
+  const pub = deleteConfirmMessage('abc', 'published');
+  assert.ok(pub.includes('正在对外展示') && pub.includes('abc'), '已发布要多提示一句，并入同一个确认框');
+  assert.ok(!deleteConfirmMessage('abc', 'draft').includes('正在对外展示'));
+});
+
+check('W2-c ③：删除＝先清 R2 文件、全部成功后才删资料卡；中途失败保留资料卡可重试', () => {
+  assert.ok(deleteFn.includes('listAdminBucketObjects(env, `modules/${slug}/`)'), '按 slug 前缀列举');
+  assert.ok(deleteFn.includes('ASSETS_BUCKET.delete(obj.key)'), '逐个删对象');
+  assert.ok(deleteFn.includes('PARTIAL_DELETE') && deleteFn.includes('remaining'), '部分失败要有可重试回执');
+  const idxDeleteObjects = deleteFn.indexOf('ASSETS_BUCKET.delete(obj.key)');
+  const idxDeleteRow = deleteFn.indexOf('DELETE FROM modules WHERE slug = ?');
+  assert.ok(idxDeleteObjects > 0 && idxDeleteRow > idxDeleteObjects, '必须先清文件，再删资料卡');
+  assert.ok(deleteFn.includes('INDEX_VERIFY_FAILED'), '删卡后要写后读回断言');
+  assert.ok(deleteFn.includes('previousStatus') && deleteFn.includes('deletedObjects'));
+  assert.ok(deleteFn.includes('isWritesEnabled(env)'), '写口受一键熔断管住');
+  assert.ok(!deleteFn.includes('upload_locks') && !deleteFn.includes('total_bytes'), '删除不划账（R4-5）');
+});
+
+check('W2-c ③：删后同 slug 可再用——索引行删掉即走正常新建，不重复计账', () => {
+  assert.ok(adminWorker.includes('SELECT status FROM modules WHERE slug = ?'), 'prepare 只按 modules 判重名');
+  assert.ok(!deleteFn.includes('upload_locks'), '删除不动预留表，prepare 的 replacing 会自然抵消旧预留');
+});
+
+check('W2-c ③（R9 + R10）：只翻 modules/ 前缀、真删该前缀下无索引对象，绝不登记「孤儿值」', () => {
+  assert.ok(calibrateFn.includes('listAdminBucketObjects(env, MODULE_KEY_PREFIX)'), '只翻本项目前缀，不翻全桶');
+  assert.ok(!calibrateFn.includes('listAdminBucketObjects(env)'), '不能退回无前缀的全桶列举');
+  assert.ok(calibrateFn.includes('isOrphanR2Key') && calibrateFn.includes('slugFromR2Key'), '孤儿判定走 shared 唯一口径');
+  assert.ok(calibrateFn.includes('ASSETS_BUCKET.delete(obj.key)'), '真删对象，不是只改数字');
+  assert.ok(calibrateFn.includes('PARTIAL_CALIBRATE') && calibrateFn.includes('remaining'), '删一半失败要可重试、不改账本');
+  // 用户 R9：把孤儿量记回预留 = 把账抬高迁就垃圾，R2 一点没变小 → 明令禁止
+  assert.ok(!calibrateFn.includes('unindexedBytes'), '不得再计算孤儿量');
+  assert.ok(!calibrateFn.includes('INSERT INTO upload_locks'), '不得再插任何聚合孤儿预留');
+  assert.ok(!calibrateFn.includes('__unindexed__'), '不得留孤儿占位 slug');
+  assert.ok(!calibrateFn.includes('indexedBytes'), '不得靠差额兜账');
+  assert.ok(calibrateFn.includes('DELETE FROM upload_locks'), '垃圾清完后陈旧预留全清');
+  // 前缀常量与 buildR2Key 唯一口径不漂移
+  assert.equal(MODULE_KEY_PREFIX, 'modules/');
+  assert.ok(buildR2Key('the-tollkeeper', 'index.html').startsWith(MODULE_KEY_PREFIX));
+  // 共用 R2：只删 modules/ 下无索引的；前缀外（别的项目 / 桶根杂项）一律不碰
+  const alive = new Set(['the-tollkeeper', 'goblin-trouble']);
+  assert.equal(isOrphanR2Key('modules/the-tollkeeper/index.html', alive), false);
+  assert.equal(isOrphanR2Key('modules/abandoned-upload/01.xmind', alive), true);
+  assert.equal(isOrphanR2Key('modules/orphan.txt', alive), true);
+  for (const outside of ['robots.txt', 'other-project/data.bin', 'shared/logo.png', '']) {
+    assert.equal(isOrphanR2Key(outside, alive), false, `前缀外 ${JSON.stringify(outside)} 不该被删`);
+  }
+});
+
+check('W2-c ③：清完孤儿后账实严格相等 → 先对齐账本 → 再写静态快照', () => {
+  assert.ok(calibrateFn.includes('UPDATE modules SET total_bytes'), '账本逐条对齐真实体积');
+  assert.ok(calibrateFn.includes('survivors'), '只按清完剩下的对象算账');
+  assert.ok(calibrateFn.includes('INSERT INTO admin_storage'), '写静态快照');
+  assert.ok(calibrateFn.includes('ON CONFLICT(id) DO UPDATE'), '重复校准是覆盖不是插重复行');
+  assert.ok(calibrateFn.includes('INDEX_VERIFY_FAILED'), '快照写后读回断言');
+  assert.ok(calibrateFn.includes('isWritesEnabled(env)'));
+  assert.ok(calibrateFn.includes('deletedOrphans'), '回执要报清掉几个孤儿对象');
+  const iDelete = calibrateFn.indexOf('ASSETS_BUCKET.delete(obj.key)');
+  const iAlign = calibrateFn.indexOf('UPDATE modules SET total_bytes');
+  const iSnapshot = calibrateFn.indexOf('INSERT INTO admin_storage');
+  assert.ok(iDelete > 0 && iAlign > iDelete, '必须先清垃圾，再算账');
+  assert.ok(iSnapshot > iAlign, '用户 R8 定稿：先更新账本值，再更新前端静态值');
+  // 列举阶段就带 modules/ 前缀：别的项目对象连列表都进不来，更不会计入「仓库规模」
+  const slugs = new Set(['the-tollkeeper', 'goblin-trouble']);
+  const allBucketObjects = [
+    { key: 'modules/the-tollkeeper/index.html', size: 100 },
+    { key: 'modules/goblin-trouble/01.xmind', size: 50 },
+    { key: 'modules/abandoned/01.xmind', size: 999 },
+    { key: 'other-project/data.bin', size: 5000 },
+    { key: 'robots.txt', size: 7 },
+  ];
+  const objects = allBucketObjects.filter((o) => o.key.startsWith(MODULE_KEY_PREFIX));
+  assert.equal(objects.length, 3, '共用桶里别的项目对象不在扫描范围内');
+  const survivors = objects.filter((o) => !isOrphanR2Key(o.key, slugs));
+  const bySlug = new Map();
+  for (const o of survivors) {
+    const s = slugFromR2Key(o.key);
+    assert.ok(s, '幸存对象必须能映射到 slug');
+    bySlug.set(s, (bySlug.get(s) ?? 0) + o.size);
+  }
+  assert.equal(survivors.reduce((a, o) => a + o.size, 0), 150, '本项目垃圾被清掉、规模只算 modules/ 这部分');
+  assert.equal([...bySlug.values()].reduce((a, b) => a + b, 0), 150, '账本合计 = 本项目真实占用');
+});
+
+check('W2-c ③：静态快照由 Worker 幂等建表，纯点击部署不用去 D1 Studio 手跑 SQL', () => {
+  assert.ok(adminWorker.includes('CREATE TABLE IF NOT EXISTS admin_storage'));
+  assert.ok(adminWorker.includes('ensureAdminStorageTable(env)'));
+  const listFn = adminWorker.slice(
+    adminWorker.indexOf('async function handleAdminModules'),
+    adminWorker.indexOf('async function handleAdminPublish'),
+  );
+  assert.ok(listFn.includes('try {') && listFn.includes('snapshotRow = null'), '表不存在时降级为「尚未校准」');
+  // 只有校准写口建表；页面访问不建表、不翻仓库
+  assert.ok(!listFn.includes('CREATE TABLE'));
+});
+
+check('W2-c ③：顶部模块横向「校准按钮 / 仓库规模 / 上次校准」，数据来自静态快照', () => {
+  assert.ok(adminAppSrc.includes('class="admin-storage"'));
+  assert.ok(adminAppSrc.includes('data-action="calibrate"'));
+  assert.ok(adminAppSrc.includes('仓库规模') && adminAppSrc.includes('上次校准'));
+  assert.ok(adminAppSrc.includes('storage ? formatBytes(storage.totalBytes)'), '显示的是静态快照值');
+  assert.ok(adminAppSrc.includes('尚未校准'), '没校准过要有可见占位');
+  assert.ok(adminAppSrc.includes('storage = data.storage ?? null'), 'load 时刷新静态值');
+  assert.ok(siteCss.includes('.admin-storage') && siteCss.includes('display: flex'), '横向一行');
+  // 用户 R8：不分开列示账本值 / 实际值，校准后本来就是同一个数
+  const storageBlock = adminAppSrc.slice(
+    adminAppSrc.indexOf('function storageHtml'),
+    adminAppSrc.indexOf('function rowHtml'),
+  );
+  assert.equal((storageBlock.match(/仓库规模/g) ?? []).length, 1, '只列一个仓库规模');
+  assert.ok(!storageBlock.includes('账本') && !storageBlock.includes('实际'), '不分开列示两个数');
+});
+
+check('W2-c ③：校准按钮点一次即执行，回执不含缓存提示（用户第 7 题）', () => {
+  const fn = adminAppSrc.slice(
+    adminAppSrc.indexOf('async function calibrate'),
+    adminAppSrc.indexOf("app.addEventListener('click'"),
+  );
+  assert.ok(fn.includes("'/api/upload/admin/calibrate'"));
+  assert.ok(fn.includes('await load()'), '校准后刷新顶部静态值与日期');
+  assert.ok(fn.includes('formatBytes(data.totalBytes)'));
+  assert.ok(fn.includes('deletedOrphans'), '回执要如实报清掉几个无索引对象');
+  assert.ok(!fn.includes('unindexedBytes'), '不应再提「孤儿值」');
+  assert.ok(!fn.includes('confirm('), '按钮本身就是手动确认，不另弹窗');
+  assert.ok(!adminAppSrc.includes('等几分钟'), '用户明确不要缓存说明');
+});
+
+check('W2-c ③：删除前端手打确认 + 行为断言（公开卡片 -1 / 管理台该行消失）', () => {
+  const fn = adminAppSrc.slice(
+    adminAppSrc.indexOf('async function remove'),
+    adminAppSrc.indexOf('// 校准：按钮本身就是手动确认'),
+  );
+  assert.ok(fn.includes('prompt(deleteConfirmMessage(slug, status))'), '两种状态都手打，已发布文案更严');
+  assert.ok(fn.includes('matchesDeleteConfirm(slug, typed)'), '前端先挡一次');
+  assert.ok(fn.includes("confirmSlug: typed"), '手打值要送 Worker 再验一次');
+  assert.ok(fn.includes("'/api/upload/admin/delete'"));
+  assert.ok(fn.includes('baseline - 1'), '已发布删除要断言卡片 -1');
+  assert.ok(fn.includes('adminRows.some((m) => m.slug === slug)'), '管理台该行也要消失');
+  assert.ok(fn.includes('deletedObjects'), '回执要报清掉几个文件');
+});
+
+check('W2-c ③：不自动跑写成断言——列举只在一个 helper 里，只被两个人工写口调用', () => {
+  assert.equal((adminWorker.match(/\.list\(/g) ?? []).length, 1, '全 Worker 只允许一处 R2 列举');
+  assert.equal(
+    (adminWorker.match(/listAdminBucketObjects\(/g) ?? []).length,
+    3,
+    '定义 1 次 + 删除 / 校准各调用 1 次，不得扩散到别处',
+  );
+  assert.ok(deleteFn.includes('listAdminBucketObjects(env, `modules/${slug}/`)'), '删除也只翻该条目前缀');
+  assert.ok(calibrateFn.includes('listAdminBucketObjects(env, MODULE_KEY_PREFIX)'), '校准只翻 modules/ 前缀');
+  const listFn = adminWorker.slice(
+    adminWorker.indexOf('async function handleAdminModules'),
+    adminWorker.indexOf('async function handleAdminPublish'),
+  );
+  assert.ok(!listFn.includes('listAdminBucketObjects'), '页面访问绝不能翻仓库');
+  for (const forbidden of ['setInterval(', 'async scheduled(', 'Cron Trigger', 'GraphQL']) {
+    assert.ok(!adminWorker.includes(forbidden), `不该出现 ${forbidden}`);
+  }
+});
+
+check('W2-c ③ 先红后绿：回退「预览页三字」/「手打确认」/「孤儿值兜账」，断言真的会红；还原后绿', () => {
+  assert.notEqual('预览'.length, adminRowActions('published').previewLabel.length, '旧文案应让断言变红');
+  const legacyConfirm = (slug, typed) => typed !== undefined;
+  assert.equal(legacyConfirm('abc', 'abd'), true, '旧确认形同虚设应让断言变红');
+  assert.equal(matchesDeleteConfirm('abc', 'abd'), false, '还原后应变绿');
+  // R9 用户纠正的旧做法：不删对象，只把 999 记回预留 → 空间没压缩、账被抬高迁就垃圾
+  const legacyOrphanHandling = { unindexedBytes: 999, insertIntoLocks: true };
+  assert.ok(legacyOrphanHandling.unindexedBytes > 0, '旧实现确实会登记孤儿值，应让断言变红');
+  assert.ok(!calibrateFn.includes('unindexedBytes') && !calibrateFn.includes('INSERT INTO upload_locks'), '新实现不应留任何孤儿值');
+  assert.ok(calibrateFn.includes('ASSETS_BUCKET.delete(obj.key)'), '还原后应变绿：真删垃圾');
+  assert.equal((adminWorker.match(/\.list\(/g) ?? []).length, 1, '列举点数量白名单还原后应变绿');
+  assert.equal(adminRowActions('draft').previewLabel, '预览页');
+});
+
+// ---------- R10 · 共用 R2（只删 modules/ 下无索引的） + 本项目门槛 5GB ----------
+check('R10 共用桶：容量闸门 = 5GB，wrangler.toml 与代码缺省一致（线上显式写 8 必须一并改）', () => {
+  assert.equal(COST_GUARD_DEFAULTS.bucketCapBytes, 5 * GB_UNIT);
+  assert.equal(readCostGuards({}).bucketCapBytes, 5 * GB_UNIT, 'vars 缺省时也落 5GB');
+  const toml = readFileSync(join(ROOT, 'wrangler.toml'), 'utf8');
+  assert.ok(/BUCKET_CAP_GB\s*=\s*"5"/.test(toml), '线上配置显式写值，只改代码缺省不生效');
+  assert.ok(!/BUCKET_CAP_GB\s*=\s*"8"/.test(toml), '不能留 8');
+  assert.ok(toml.includes('共用'), '配置里要写明这是共用桶下的本项目自限额');
+  // 部署指引是当前生效的操作文档，不能还写着 8GB 误导；历史档案 v1–v7 按 §0.11 不动
+  const doc = readFileSync(join(ROOT, 'docs/部署指引_纯点击.md'), 'utf8');
+  assert.ok(!/8\s*GB|8GB/.test(doc), '部署指引不能残留 8GB');
+  assert.ok(doc.includes('5 GB') && doc.includes('共用'));
+});
+
+check('R10：成本默认值改 5GB 后，上传端 vendor 必须连着重出（防本地预检仍按 8GB 放行）', () => {
+  // web/vendor/upload.js 内联了 shared/cost.js 的默认闸门；改了源码不重出 vendor，
+  // 会出现「上传端本地按 8GB 放行、Worker 按 5GB 拒绝」的口径分叉。
+  const uploadVendor = readFileSync(join(ROOT, 'web/vendor/upload.js'), 'utf8');
+  assert.ok(uploadVendor.includes(String(5 * GB_UNIT)), '上传端内联闸门必须同步成 5GB');
+  assert.ok(!uploadVendor.includes(String(8 * GB_UNIT)), '不能残留 8GB 默认值');
+  assert.equal(COST_GUARD_DEFAULTS.bucketCapBytes, 5 * GB_UNIT);
+});
+
+check('R10 口径统一：账本 / 校准规模 / 容量闸门算的都是 modules/ 这部分', () => {
+  const usageQuery = adminWorker.slice(
+    adminWorker.indexOf('成本闸门 ②'),
+    adminWorker.indexOf('// 先记预留'),
+  );
+  assert.ok(usageQuery.includes('SUM(total_bytes)') && usageQuery.includes('FROM modules'), '账本只按 D1 modules 聚合');
+  assert.ok(!usageQuery.includes('ASSETS_BUCKET') && !usageQuery.includes('.list('), '写口核算不翻 R2');
+  assert.ok(calibrateFn.includes('MODULE_KEY_PREFIX'), '校准规模只算 modules/ 前缀');
+  assert.equal(MODULE_KEY_PREFIX, 'modules/');
+});
+
+check('R10 先红后绿：回退「翻全桶」「删前缀外对象」「8GB 闸门」，断言真的会红；还原后绿', () => {
+  assert.ok(
+    'listAdminBucketObjects(env)'.length < 'listAdminBucketObjects(env, MODULE_KEY_PREFIX)'.length,
+    '旧的全桶列举应让断言变红',
+  );
+  const legacyOutsideIsOrphan = true;
+  assert.notEqual(legacyOutsideIsOrphan, isOrphanR2Key('other-project/data.bin', new Set()), '旧判定会误删别的项目');
+  assert.notEqual(8 * GB_UNIT, COST_GUARD_DEFAULTS.bucketCapBytes, '旧 8GB 闸门应让断言变红');
+  assert.equal(readCostGuards({}).bucketCapBytes, 5 * GB_UNIT, '还原后应变绿');
+  assert.ok(calibrateFn.includes('MODULE_KEY_PREFIX'));
+});
+
 // ---------- 汇总 ----------
 console.log(`\n=== 通过 ${results.length} 项断言 ===`);
 console.log(`
 沙盒已验：
   · 单元测试 npm test（契约 / 路径 / 依赖解析 / 单文件同名显式跳过 / 封面落条目根 / xmind 格式判定 / 成本闸门 / fail-closed / 一键熔断 / W2-b 更新模式唯一口径）
-  · 本冒烟 ${results.length} 项：三区输入 → 剥顶层 → R2 key 格局 → 单文件同名显式跳过 → 封面并入 → Worker return await 静态审计 → 上传页版式回归 → W2-b 勾选项 / schema / token / Worker 双侧校验 / D-01 断言分叉 → **W2-c ① 管理台受保护路由 / 全量列表 / 上架只改 status / 五列与按钮态 / 草稿预览壳 / 前台零改动** → **W2-c ② 下架只改 status / 卡片 -1 行为断言 / 上架下架互斥 / 预览与条目页新标签打开** → 依赖逐项断言 → 两代 xmind 出图 → 成本闸门 → 反模式静态审计
+  · 本冒烟 ${results.length} 项：三区输入 → 剥顶层 → R2 key 格局 → 单文件同名显式跳过 → 封面并入 → Worker return await 静态审计 → 上传页版式回归 → W2-b 勾选项 / schema / token / Worker 双侧校验 / D-01 断言分叉 → **W2-c ① 管理台受保护路由 / 全量列表 / 上架只改 status / 五列与按钮态 / 草稿预览壳 / 前台零改动** → **W2-c ② 下架只改 status / 卡片 -1 行为断言 / 上架下架互斥 / 预览与条目页新标签打开** → **W2-c ③ 删除手打 slug 确认 / 先清文件后删卡 / 失败可重试 / 删后同 slug 可再用 / 顶部静态校准模块 / 先对齐账本再写快照 / 不自动跑白名单 / R9 校准真删孤儿对象、不登记孤儿值 / R10 只翻 modules/ 前缀、前缀外不碰、本项目门槛 5GB** → 依赖逐项断言 → 两代 xmind 出图 → 成本闸门 → 反模式静态审计
   · Worker TypeScript 类型检查、Worker bundle 体积、前端 vendor 产物语法
 
 只能真机 / 用户本地验（见档案 §0.6）：

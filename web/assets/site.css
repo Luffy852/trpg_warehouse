@@ -217,8 +217,27 @@ main { max-width: 1080px; margin: 0 auto; padding: 28px 20px 56px; }
 .admin-table button.btn--sm:not(:disabled) {
   background: var(--accent); color: #241a0d; border-color: var(--accent);
 }
-/* 第 1 步未点亮的按钮：灰着、不可点生效、不加额外注释 */
+/* 未点亮的按钮：灰着、不可点生效、不加额外注释 */
 .admin-table .btn--sm:disabled { opacity: .38; cursor: not-allowed; }
+/* 删除是不可逆动作，给一点危险色提示，不与「上架 / 下架」混淆 */
+.admin-table button[data-action="delete"]:not(:disabled) {
+  background: rgba(224, 122, 107, .16); color: #f4c2ba; border-color: var(--danger);
+}
+
+/* W2-c 第 3 步 · 顶部校准模块：横向一行，显示上次校准留下的静态快照 */
+.admin-storage {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 12px 16px; margin-bottom: 18px;
+}
+.admin-storage .btn--sm {
+  padding: 7px 16px; font-size: 13px; font-weight: 700; white-space: nowrap;
+  background: var(--accent); color: #241a0d; border: 1px solid var(--accent);
+  border-radius: 8px; cursor: pointer;
+}
+.admin-storage .btn--sm:hover { border-color: var(--accent-soft); }
+.admin-storage__item { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.admin-storage__item strong { color: var(--ink); font-weight: 600; margin-left: 4px; }
 
 @media (max-width: 640px) {
   .site-header { padding: 18px 16px 14px; }

@@ -57,10 +57,13 @@ PRESIGN_EXPIRES = "3600"
 # 成本闸门（B1-3）：R2 没有原生硬性账单上限，Worker 在写口自己卡体积 / 数量 / 累计容量。
 # 这 4 个是可选阈值，在 GitHub 网页编辑本文件即可调，不必改代码；缺省值与 shared/cost.js 一致。
 # BUCKET_CAP_GB 会被钳制到 10（R2 免费存储上限），填更大也不会放行超额上架。
+# ★ 用户 R10：这个 R2 可能与另一个项目共用 → 本项目 `modules/` 这部分自限 5 GB。
+#   注意 R2 Free 的 10 GB-month 按整个桶算，5 是本项目账本闸门（modules 聚合），
+#   不是云端硬隔离；两个项目合起来是否超 10 GB 要双方各自的限额一起守住。
 MAX_SINGLE_FILE_MB = "50"
 MAX_ENTRY_MB = "200"
 MAX_FILES_PER_ENTRY = "500"
-BUCKET_CAP_GB = "8"
+BUCKET_CAP_GB = "5"
 
 # ★ 一键熔断（纯点击）：把这里改成 "0" → Commit → Workers Builds 自动部署，
 #   /api/upload/prepare 与 /api/upload/finalize 立刻返回 503，不再写 R2 / D1。

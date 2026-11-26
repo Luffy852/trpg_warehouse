@@ -36,6 +36,6 @@ export interface ModuleRow {
   console_file: string;
   mindmap_file: string;
   created_at: string;
-  /** 该条目实际占用 R2 的字节数，由 finalize 用 head().size 累加；用于 8GB 容量锁 */
+  /** 该条目实际占用 R2 的字节数，由 finalize 用 head().size 累加；用于 5GB 容量锁（本项目 modules/ 部分） */
   total_bytes: number;
 }
