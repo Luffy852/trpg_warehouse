@@ -2,8 +2,8 @@
 
 公开只读的网页版 TRPG 模组库。上传者在受 Access 保护的 `/upload` 提交**主控台单文件 + `.xmind` 单文件 + 文件夹拖拽资源树**，浏览端即时上架；访客点卡片进条目页，并列拿到「思维导图 / 主控台」两个入口，思维导图在**浏览器内直接预览**，主控台原样托管、内部链接自然取到对应文件。
 
-> **当前参考档案版本：v8**（`docs/项目档案_trpg-warehouse_v8.md`）。`docs/` 内会累积多份历史档案（v1–v7），属正常，不要删除；S1 完成后由用户手动归档。
-> 本仓库是 **BC · B1** 首次开发产物，按《项目档案_trpg-warehouse_v8.md》§0 / §1 / §3.2 实现；W1 期间已落盘包①–④ 修正（见部署指引「W1 收官记录」），W2-a 期间新增**缩放修正 B 方案增量包**（`web/assets/mindmap-app.js` 步进 `1 → 0.1` + 状态行文案，`web/vendor/mindmap.js` 重出），**W2-b 期间新增「模组更新」显式更新开关增量包**（10 个文件：`shared/update-mode.js` 唯一口径 + 上传页勾选项 + Worker prepare/finalize 双侧权威校验 + D-01 行为断言分叉 + `web/vendor/upload.js` 重出；真机 4 项回执全过）。**W2-c 期间新增模组管理台三包**（受保护全量列表 / 一键上架 / 下架 / 删除 / 顶端静态校准；校准真删 `modules/` 下无索引孤儿；共用 R2 只翻 `modules/` 前缀；本项目容量闸门 8GB → **5GB**，`wrangler.toml` / `shared/cost.js` / `web/vendor/upload.js` 三处同步；真机合并回执全过）。
+> **当前参考档案版本：v9**（`docs/项目档案_trpg-warehouse_v9.md`）。`docs/` 内会累积多份历史档案（v1–v8），属正常，不要删除；S1 完成后由用户手动归档。
+> 本仓库是 **BC · B1** 首次开发产物，按《项目档案_trpg-warehouse_v9.md》§0 / §1 / §3.2 实现；W1 期间已落盘包①–④ 修正（见部署指引「W1 收官记录」），W2-a 期间新增**缩放修正 B 方案增量包**（`web/assets/mindmap-app.js` 步进 `1 → 0.1` + 状态行文案，`web/vendor/mindmap.js` 重出），**W2-b 期间新增「模组更新」显式更新开关增量包**（10 个文件：`shared/update-mode.js` 唯一口径 + 上传页勾选项 + Worker prepare/finalize 双侧权威校验 + D-01 行为断言分叉 + `web/vendor/upload.js` 重出；真机 4 项回执全过）。**W2-c 期间新增模组管理台三包**（受保护全量列表 / 一键上架 / 下架 / 删除 / 顶端静态校准；校准真删 `modules/` 下无索引孤儿；共用 R2 只翻 `modules/` 前缀；本项目容量闸门 8GB → **5GB**，`wrangler.toml` / `shared/cost.js` / `web/vendor/upload.js` 三处同步；真机合并回执全过）。**W3 体验收尾已完成**（单包 14 文件 + 4 个调节轮：卡片方案甲 / 5 列 / 3:4 / 38px B 方案文字区居中、条目页与导图页全套、⑧⑨、技术文案精简、内部页面不动；真机全项通过、零偏差）。
 > **部署方式是纯点击（GitHub 网页 + Cloudflare Dashboard + Workers Builds），不需要本地命令行**；步骤见 [`docs/部署指引_纯点击.md`](docs/部署指引_纯点击.md)。
 > **成本控制（B1-3）**：R2 没有原生硬性账单上限，项目用「写口体积/容量闸门（含预留量）+ CDN 缓存/WAF + 账单告警 + **一键熔断**」兜底；原则是 **fail-closed（宁停不烧钱）**，且成本机制本身零定时/高频遍历。第三方建议的逐条核实与取舍见部署指引**附录 A**与 8.8 节，第 8 步是必做项。
 > 代码已通过 **71 条单测 / 42 项离线冒烟 = 113 条断言**（W2-b 收官终态；先红 → 绿 → 回退红 → 还原绿 → 构建后复跑绿 → 干净 clone 只解压增量包复现全绿）。`npm run typecheck` 在沙盒依赖不全时仅剩既有 `jose` TS7016，**A/B 对照错误集合完全一致 → 零新增类型错误**，Workers Builds 用 `bun install` 装齐后应全绿。**Cloudflare 部署与第 10 步 1–16 项真机验收已全部通过**（`warehouse.finewinginnovation.cn` / `warehouseasset.finewinginnovation.cn`）；
@@ -52,7 +52,7 @@
 | `r2-cors.json` | R2 CORS 模板：粘贴到 Dashboard 的 CORS Policy JSON tab，同时放行 `GET` 与 `PUT` |
 | `scripts/build-web.mjs` `scripts/smoke.mjs` | 前端打包 / 离线冒烟（**42 项**：两代 xmind 合成样本 + 封面并入 + `return await` 静态审计 + 上传页版式回归 + **W2-b 勾选项 / Worker 双侧 / D-01 分叉静态断言** + 成本闸门 + fail-closed + 预览页缩放静态断言） |
 | `docs/部署指引_纯点击.md` | **部署步骤唯一出处**（网页点选，零命令行） |
-| **`docs/项目档案_trpg-warehouse_v8.md`** | **当前参考版本 v8 ＝ 项目唯一信息载体**。`docs/` 里 v1–v7 等旧版**并存、不删、不作依据**；S1 完成后由用户手动归入 `docs/archive/`。**§0.11 是每个新对话开场必读的「硬盘体系」规程**（v7 / v8 已澄清「工作区留存备查、不纳入后续窗口、不打包交付」） |
+| **`docs/项目档案_trpg-warehouse_v9.md`** | **当前参考版本 v9 ＝ 项目唯一信息载体**。`docs/` 里 v1–v8 等旧版**并存、不删、不作依据**；S1 完成后由用户手动归入 `docs/archive/`。**§0.11 是每个新对话开场必读的「硬盘体系」规程**（v7 / v8 已澄清「工作区留存备查、不纳入后续窗口、不打包交付」） |
 
 ---
 
@@ -68,7 +68,7 @@
 
 | 阶段 | 在哪个网页 | 做什么 |
 |---|---|---|
-| 0 | GitHub | 上传 `W2c收尾_文档同步包.zip`（**档案只增不删**：新增 `docs/项目档案_trpg-warehouse_v8.md`，不用删旧版、不用管覆盖；`README.md` 与 `docs/部署指引_纯点击.md` 为**同名替换**，仅同步「当前参考版本」与 W2-c 结论） |
+| 0 | GitHub | 上传 `W3收尾_档案v9_文档同步包.zip`（**档案只增不删**：新增 `docs/项目档案_trpg-warehouse_v9.md`，不用删旧版、不用管覆盖；`README.md` 与 `docs/部署指引_纯点击.md` 为**同名替换**，仅同步「当前参考版本」与 W3 / 开发阶段收尾结论） |
 | 1 | — | 备好「值清单」（6 个配置值 + 3 个 Secret） |
 | 2 | Cloudflare Dashboard | 建 D1 `trpg-warehouse-db`、R2 `trpg-warehouse-assets`、**R2 自定义域**、R2 S3 API token；停用 r2.dev |
 | 3 | Zero Trust | 设 team domain + 建 Self-hosted Access 应用（`/upload*`、`/api/upload*` 两条 path） |
@@ -157,7 +157,7 @@ Workers Builds 会自动 clone 仓库并**自动安装依赖**。Free 计划每�
 - **元宝侧收不到 `.xmind`**：B1 用合成样本验了两代格式解析与失败兜底；渲染保真度须你用本地真实样本验。你的浏览器上传不受此限。
 - **完整主控台与真实资源树未到手**：`relativePath` 剥顶层是否与主控台内实际引用写法一致、根相对 `/...` 路径、中文路径编码，均待真机验。Worker 与上传端会把检出的根相对路径单独回执提示，不擅自改整体路由口径。
 - 不做中文搜索 / 全文检索 / 搜索输入框；条目多了只能靠分类点击找。
-- 浏览端不做登录 / 评论 / 用户系统；**`draft → published` 轻量上架 / 下架 / 删除重传 / 受保护删除写口**已在 **W2-c 完成**（见档案 v8 §0.4 / §5）。下个窗口领 **W3 体验收尾**（见档案 v8 §5.2）。
+- 浏览端不做登录 / 评论 / 用户系统；**`draft → published` 轻量上架 / 下架 / 删除重传 / 受保护删除写口**已在 **W2-c 完成**（见档案 v8 §0.4 / §5）。**W1–W3 已完成并关闭、W4 无待收敛修问题已关闭**；下个窗口领 **D 段体检及优化轮**（按档案 v9 §0.8 L3 入场另需《工具开发协作手册》现行版，见档案 v9 §5.2）。
 - 单次上架依赖 D1 写入成功；上传端已用「卡片 +1」行为断言兜住「回执成功但没上架」。
 - **R2 成本控制不是「自动硬熔断」，但可以一键停机**：Cloudflare 目前没有 R2 的硬性账单上限，Spend Management 只覆盖 Workers / Durable Objects。本项目靠「写口体积/累计容量闸门（8 GB 锁）+ 预留量 + CDN 缓存 + WAF 限流 + 账单告警」压低风险，异常时把 `WRITES_ENABLED` 改成 `"0"` 并 Disable R2 自定义域即可停机；但**不能承诺 100% 零费用，也不能承诺无需人工干预**；恶意刷自定义域且持续制造缓存未命中，理论上仍会累积 Class B。自动熔断脚本需要常驻 Cron + API Token，且「定时遍历」正是历史上一天烧爆 DO 免费读写的模式，本轮明确不引入（部署指引 8.8 反模式登记）。
 - **容量账面宁可高估、绝不低估**：`prepare` 先记 `upload_locks` 预留量再签 URL，上传中途放弃 / `finalize` 失败会留下永久预留，容量锁可能提前拦死上架 —— 这是刻意的 fail-closed 行为，不是 bug；清理办法见部署指引排错表。为「精确到字节」去遍历桶反而更贵，不做。
