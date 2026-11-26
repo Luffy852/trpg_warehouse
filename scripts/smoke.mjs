@@ -1136,12 +1136,14 @@ check('W3 调节轮 ①：首页顶部不再挂「点击浏览」说明，页脚
   assert.ok(w3HomeHtml.includes('<h1>TRPG 模组库</h1>'), '主标题不受影响');
 });
 
-check('W3 调节轮 ②：卡片模组名区收紧到约 40px，同行卡片不再互相拉伸出大块留白', () => {
+check('W3 R7 ③：文字区去掉 flex 居中 / min-height，回到紧凑块级流（单行约 30px）', () => {
   assert.ok(w3css.includes('align-items: start; }'), 'grid 行高不拉伸卡片');
-  assert.ok(w3css.includes('min-height: 40px'), '单行文字区高度对齐用户绿框示意');
-  assert.ok(w3css.includes('padding: 8px 12px'), '上下留白收紧');
-  assert.ok(!w3css.includes('padding: 12px 12px 14px'), '旧的大留白必须移除');
-  assert.ok(w3css.includes('min-height: 36px'), '窄屏同步收紧');
+  const body = w3css.slice(w3css.indexOf('.card__body {'), w3css.indexOf('.card__title {'));
+  assert.ok(!body.includes('display: flex') && !body.includes('min-height'), 'flex 居中 + min-height 会把 line-clamp 行盒撑高，必须移除');
+  assert.ok(body.includes('padding: 5px 10px 7px'), '上下留白压到最小');
+  assert.ok(w3css.includes('line-height: 1.3') && w3css.includes('-webkit-line-clamp: 2'), '标题仍可两行截断');
+  assert.ok(!w3css.includes('padding: 12px 12px 14px') && !w3css.includes('padding: 8px 12px; min-height: 40px'), 'R5 / R6 两版大留白都不复现');
+  assert.ok(w3css.includes('padding: 4px 8px 6px') && !w3css.includes('min-height: 36px'), '窄屏同步压紧');
 });
 
 check('W3：改过的前端源码必须连带重出 vendor（防线上与源码口径分叉）', () => {
@@ -1162,9 +1164,10 @@ check('W3 先红后绿：回退 5 列 / 3:4 / 新标签 / 返回按钮 / 两组�
   assert.ok(!'<h1>思维导图预览</h1>'.includes('id="mapTitle"'), '旧标题会红');
   assert.ok(!'other</option>'.includes('建议模组名标记'), '旧 other 文案会红');
   assert.ok('<div class="brand"><h1>TRPG 模组库</h1><span>点击浏览</span></div>'.includes('<span>点击浏览</span>'), '旧顶部说明会红');
-  assert.ok('padding: 12px 12px 14px' !== 'padding: 8px 12px; min-height: 40px', '旧大留白会红');
+  assert.ok('padding: 12px 12px 14px' !== 'padding: 5px 10px 7px', 'R5 旧大留白会红');
+  assert.ok('display: flex; align-items: center' !== 'display: block', 'R6 的 flex 居中会红');
   assert.ok(w3css.includes('repeat(5, minmax(0, 1fr))') && w3css.includes('aspect-ratio: 3 / 4'), '还原后应变绿');
-  assert.ok(w3css.includes('align-items: start') && w3css.includes('min-height: 40px'), '调节轮还原后应变绿');
+  assert.ok(w3css.includes('align-items: start') && w3css.includes('padding: 5px 10px 7px') && !w3css.includes('min-height: 40px'), 'R7 还原后应变绿');
   assert.ok(siteApp.includes('target="_blank" rel="noopener"') && mmApp.includes('mind.scaleFit?.()'));
 });
 
