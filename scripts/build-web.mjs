@@ -22,6 +22,7 @@ const jobs = [
   ['web/assets/app.js', 'web/vendor/site.js'],
   ['web/assets/mindmap-app.js', 'web/vendor/mindmap.js'],
   ['web/assets/upload-app.js', 'web/vendor/upload.js'],
+  ['web/assets/admin-app.js', 'web/vendor/admin.js'],
 ];
 
 mkdirSync(resolve(root, 'web/vendor'), { recursive: true });

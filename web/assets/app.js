@@ -2,7 +2,10 @@
 // 纯点击-查看：无搜索框、无文本输入交互；首屏只拉一次 /api/modules。
 import { SYSTEM_LABELS, KIND_LABELS } from '../../shared/contract.js';
 
-const API = '/api/modules';
+// W2-c 第 1 步：只有 /upload/ 下的受保护预览壳才去查后台全量账本（含 draft）。
+// 前台首页 / 条目页不带这个路径 → 仍只拉公开的 /api/modules，访客看到的内容一字不变。
+const ADMIN = location.pathname.startsWith('/upload/');
+const API = ADMIN ? '/api/upload/admin/modules' : '/api/modules';
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => ({
@@ -69,12 +72,13 @@ function renderModule(modules, slug) {
   const app = document.getElementById('app');
   const mod = modules.find((m) => m.slug === slug);
   if (!mod) {
-    app.innerHTML = '<div class="error-box">找不到该条目，或它尚未发布（draft 不出现在浏览端）。</div>';
+    app.innerHTML = `<div class="error-box">${ADMIN ? '找不到该条目。' : '找不到该条目，或它尚未发布（draft 不出现在浏览端）。'}</div>`;
     return;
   }
   document.title = `${mod.title} · TRPG 模组库`;
-  // 两入口 URL 分别来自索引 consoleFile / mindmapFile，不硬编码文件名（中文原名保留）
-  const mindmapUrl = `/mindmap.html?slug=${encodeURIComponent(mod.slug)}`;
+  // 两入口 URL 分别来自索引 consoleFile / mindmapFile，不硬编码文件名（中文原名保留）。
+  // 草稿预览态里导图入口也走 /upload/ 受保护壳，否则它会去查公开列表而扑空。
+  const mindmapUrl = `/${ADMIN ? 'upload/' : ''}mindmap.html?slug=${encodeURIComponent(mod.slug)}`;
   const consoleUrl = mod.baseUrl + encodeRelative(mod.consoleFile);
   const cover = coverUrl(mod);
   app.innerHTML = `

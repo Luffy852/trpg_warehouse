@@ -1,0 +1,17 @@
+var f={dnd:"DND",coc:"COC",other:"\u5176\u4ED6\u89C4\u5219"},b={campaign:"\u6218\u5F79",module:"\u6A21\u7EC4",encounter:"\u906D\u9047"},h={draft:"\u8349\u7A3F",published:"\u5DF2\u53D1\u5E03"};function g(t,e){return`${f[t]??t}-${b[e]??e}`}function m(t){return h[t]??t}function $(t){let e=t==="draft";return{previewLabel:e?"\u9884\u89C8":"\u6761\u76EE\u9875",publishEnabled:e,unpublishEnabled:!1,removeEnabled:!1}}function y(t,e){let s=`?slug=${encodeURIComponent(t)}`;return e==="draft"?`/upload/preview.html${s}`:`/module.html${s}`}var S=document.getElementById("adminApp"),l=[],i=null;function n(t){return String(t??"").replace(/[&<>"']/g,e=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[e])}async function p(t){let e=await fetch(t,{cache:"no-store"});if(!e.ok)throw new Error(`HTTP ${e.status}`);return e.json()}function T(t){let e=$(t.status),s=y(t.slug,t.status);return`<tr>
+    <td>${n(t.title)}</td>
+    <td class="slug-cell">${n(t.slug)}</td>
+    <td>${n(g(t.system,t.kind))}</td>
+    <td>${n(m(t.status))}</td>
+    <td>
+      <div class="row-actions">
+        <a class="btn btn--sm" href="${n(s)}">${n(e.previewLabel)}</a>
+        <button type="button" class="btn btn--sm" data-action="publish" data-slug="${n(t.slug)}" data-title="${n(t.title)}"${e.publishEnabled?"":" disabled"}>\u4E0A\u67B6</button>
+        <button type="button" class="btn btn--sm" disabled>\u4E0B\u67B6</button>
+        <button type="button" class="btn btn--sm" disabled>\u5220\u9664</button>
+      </div>
+    </td>
+  </tr>`}function w(){let t=i?`<div class="result ${i.bad?"bad":"ok"}">${n(i.text)}</div>`:"",e=l.length?`<div class="admin-table-wrap"><table class="admin-table">
+        <thead><tr><th>\u6A21\u7EC4\u540D</th><th>slug</th><th>\u89C4\u5219\u53CA\u4F53\u91CF</th><th>\u72B6\u6001</th><th>\u64CD\u4F5C</th></tr></thead>
+        <tbody>${l.map(T).join("")}</tbody>
+       </table></div>`:'<p class="empty">\u4ED3\u5E93\u91CC\u8FD8\u6CA1\u6709\u4EFB\u4F55\u6A21\u7EC4\u3002</p>';S.innerHTML=t+e}function o(t,e=!1){i={text:t,bad:e},w()}async function L(){try{let t=await p("/api/upload/admin/modules");l=Array.isArray(t.modules)?t.modules:[],w()}catch(t){l=[],o(`\u8F7D\u5165\u6A21\u7EC4\u5217\u8868\u5931\u8D25\uFF1A${t.message}`,!0)}}async function v(t,e){if(confirm(`\u786E\u5B9A\u628A\u300C${e}\u300D\u4E0A\u67B6\u5230\u516C\u5F00\u6D4F\u89C8\u7AEF\u5417\uFF1F`)){o(`\u6B63\u5728\u4E0A\u67B6 ${t} \u2026`);try{let u=((await p("/api/modules")).modules??[]).length,c=await fetch("/api/upload/admin/publish",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({slug:t})}),d=await c.json().catch(()=>({}));if(!c.ok||d.ok!==!0||d.status!=="published")throw new Error(d.error??`HTTP ${c.status}`);let r=(await p("/api/modules")).modules??[],a=[];if(r.length!==u+1&&a.push(`\u671F\u671B ${u+1} \u5F20\u5361\u7247\uFF0C\u5B9E\u9645 ${r.length} \u5F20`),r.some(E=>E.slug===t)||a.push(`\u6D4F\u89C8\u7AEF\u5217\u8868\u91CC\u627E\u4E0D\u5230 ${t}`),a.length){o(`\u72B6\u6001\u5DF2\u5199\u5165\uFF0C\u4F46\u6D4F\u89C8\u7AEF\u672A\u6309\u9884\u671F\u53D8\u5316\uFF1A${a.join("\uFF1B")}`,!0);return}o(`\u4E0A\u67B6\u6210\u529F\uFF1A${t} \xB7 \u6D4F\u89C8\u7AEF\u5361\u7247 +1\uFF08${u} \u2192 ${r.length}\uFF09`),await L()}catch(s){o(`\u4E0A\u67B6\u5931\u8D25\uFF1A${s?.message??String(s)}`,!0)}}}S.addEventListener("click",t=>{let e=t.target.closest('button[data-action="publish"]');!e||e.disabled||v(e.dataset.slug,e.dataset.title)});L();

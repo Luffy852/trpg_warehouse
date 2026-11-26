@@ -7,6 +7,7 @@ import { presignPut } from './presign';
 import { signToken, verifyToken } from './token';
 import { validateMeta } from '../../shared/contract.js';
 import { decideUploadMode } from '../../shared/update-mode.js';
+import { sortAdminRows, canPublish } from '../../shared/admin.js';
 import { isUnsafeRelativePath, findDuplicateNames, buildUploadPlan } from '../../shared/paths.js';
 import { extractReferences, buildAvailableSet, findMissingDeps } from '../../shared/deps.js';
 import {
@@ -48,10 +49,21 @@ export default {
         );
       }
 
-      // 四个 API 分支必须 await：否则 handler 里的异步错误会绕过下面的 catch，
+      // 所有 API 分支必须 await：否则 handler 里的异步错误会绕过下面的 catch，
       // JSON 500 / 413 / 503 会退化成 Cloudflare 1101 页（影响 #11 / #12 / #15 的报错形态）。
       // 见档案 §0.6「return await 兜底隐患」，W1 跑通后单独修正，不与 #5 混改。
       if (path === '/api/modules' && request.method === 'GET') return await handleModules(env);
+
+      // ── W2-c 第 1 步 · 模组管理台（全部在 /api/upload* 这条已受 Access 保护的 path 下）──
+      // 全量列表含 draft；写口只改 status，不动 R2 / upload_locks / 容量账。
+      if (path === '/api/upload/admin/modules' && request.method === 'GET') {
+        await requireAccess(request, env);
+        return await handleAdminModules(env);
+      }
+      if (path === '/api/upload/admin/publish' && request.method === 'POST') {
+        await requireAccess(request, env);
+        return await handleAdminPublish(request, env);
+      }
 
       if (path === '/api/upload/prepare' && request.method === 'POST') {
         await requireAccess(request, env);
@@ -98,6 +110,79 @@ async function handleModules(env: Env): Promise<Response> {
     createdAt: row.created_at,
   }));
   return json({ modules });
+}
+
+// W2-c 第 1 步：受保护全量列表。前台 /api/modules 一个字不改、仍只返 published。
+// 排序走 shared/admin.js 唯一口径（体系序 → slug A→Z）；返回体不含资源包清单。
+async function handleAdminModules(env: Env): Promise<Response> {
+  const { results } = await env.DB.prepare(
+    `SELECT slug, title, system, kind, summary, cover, status, console_file, mindmap_file, created_at
+     FROM modules`,
+  ).all<ModuleRow>();
+  const base = env.R2_PUBLIC_BASE_URL.replace(/\/+$/, '');
+  const modules = sortAdminRows(results ?? []).map((row) => ({
+    slug: row.slug,
+    title: row.title,
+    system: row.system,
+    kind: row.kind,
+    summary: row.summary,
+    cover: row.cover,
+    status: row.status,
+    consoleFile: row.console_file,
+    mindmapFile: row.mindmap_file,
+    // 资源基址由 slug 推导，不另存一份（原则 6）；草稿预览页据此直取 R2 原文件
+    baseUrl: `${base}/modules/${encodeURIComponent(row.slug)}/`,
+    createdAt: row.created_at,
+  }));
+  return json({ modules });
+}
+
+// W2-c 第 1 步：单字段改 status（draft → published），不重传文件、不动 R2、不动容量账。
+// 与 finalize 一致：写后读回断言，回执成功 ≠ 状态真的翻了。
+async function handleAdminPublish(request: Request, env: Env): Promise<Response> {
+  // 写口一律受一键熔断管住（不涉及 R2，但保持「写口统一」口径）
+  if (!isWritesEnabled(env)) {
+    return json(
+      { error: '写口已熔断，暂停上架（成本保护）', code: 'WRITES_DISABLED' },
+      503,
+    );
+  }
+  const body = (await request.json().catch(() => null)) as { slug?: string } | null;
+  const slug = typeof body?.slug === 'string' ? body.slug : '';
+  if (!slug) return json({ error: '缺少 slug', code: 'BAD_REQUEST' }, 400);
+
+  const row = await env.DB.prepare('SELECT status FROM modules WHERE slug = ?')
+    .bind(slug)
+    .first<{ status: string }>();
+  if (!row) return json({ error: '条目不存在', code: 'NOT_FOUND' }, 404);
+  // 只接受 draft → published：重复点 / 已发布 / 脏状态一律拒，不静默改写
+  if (!canPublish(row.status)) {
+    return json(
+      { error: '只有草稿可以上架；该条目已是已发布状态', code: 'ALREADY_PUBLISHED' },
+      409,
+    );
+  }
+
+  await env.DB.prepare(
+    "UPDATE modules SET status = 'published', updated_at = datetime('now') WHERE slug = ? AND status = 'draft'",
+  )
+    .bind(slug)
+    .run();
+
+  const after = await env.DB.prepare('SELECT status FROM modules WHERE slug = ?')
+    .bind(slug)
+    .first<{ status: string }>();
+  if (!after || after.status !== 'published') {
+    return json({ error: '状态写入校验失败，未确认上架', code: 'INDEX_VERIFY_FAILED' }, 500);
+  }
+
+  return json({
+    ok: true,
+    slug,
+    status: 'published',
+    previousStatus: row.status,
+    verified: true,
+  });
 }
 
 // 上架前权威校验 + 签发预签名 URL。任何一项不过都不写索引。

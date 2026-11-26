@@ -423,7 +423,10 @@ async function submit() {
           ? [`⚠ Worker 同样检出根相对路径：${prep.checks.rootRelativeRefs.join('、')}`]
           : []),
       ],
-      `<p style="margin-top:10px"><a href="/module.html?slug=${encodeURIComponent(prep.slug)}">打开条目页 →</a></p>`,
+      // W2-c 第 1 步：草稿存好了但浏览端看不到 —— 回执里必须给一条「没上架 + 去哪上架」的提示。
+      meta.status === 'draft'
+        ? `<p style="margin-top:10px">这条还在<strong>草稿</strong>，浏览端不出现。到 <a href="/upload/admin.html">模组管理台 →</a> 预览或上架。</p>`
+        : `<p style="margin-top:10px"><a href="/module.html?slug=${encodeURIComponent(prep.slug)}">打开条目页 →</a></p>`,
     );
   } catch (err) {
     showBad('上架过程中出错', [err?.message ?? String(err)]);

@@ -14,6 +14,11 @@ const downloadEl = document.getElementById('download');
 const detailEl = document.getElementById('detail');
 const mapEl = document.getElementById('map');
 
+// W2-c 第 1 步：只有 /upload/ 下的受保护预览壳才查后台全量账本（含 draft）。
+// 前台 /mindmap.html 仍只拉公开的 /api/modules，访客行为一字不变。
+const ADMIN = location.pathname.startsWith('/upload/');
+const MODULES_API = ADMIN ? '/api/upload/admin/modules' : '/api/modules';
+
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -35,20 +40,26 @@ function fail(message, detail) {
 async function main() {
   const slug = new URLSearchParams(location.search).get('slug');
   if (!slug) return fail('缺少 slug 参数');
-  downloadEl.href = `/api/download?slug=${encodeURIComponent(slug)}&file=mindmap`;
 
   let mod;
   try {
-    const res = await fetch('/api/modules', { cache: 'no-store' });
+    const res = await fetch(MODULES_API, { cache: 'no-store' });
     if (!res.ok) throw new Error(`索引接口 HTTP ${res.status}`);
     const data = await res.json();
     mod = (data.modules ?? []).find((m) => m.slug === slug);
-    if (!mod) throw new Error('索引里找不到该条目（可能是 draft 或尚未上架）');
+    if (!mod) {
+      throw new Error(ADMIN ? '后台账本里找不到该条目' : '索引里找不到该条目（可能是 draft 或尚未上架）');
+    }
   } catch (err) {
     return fail('无法读取条目索引', err.message);
   }
 
   const fileUrl = mod.baseUrl + encodeRelative(mod.mindmapFile);
+  // 解析失败时的「下载原文件」兜底：前台走 /api/download；受保护预览态直接指 R2 原文件
+  // （/api/download 带 status='published'，草稿会 404，不能把死链留给后台预览）。
+  downloadEl.href = ADMIN
+    ? fileUrl
+    : `/api/download?slug=${encodeURIComponent(slug)}&file=mindmap`;
   let buffer;
   try {
     const res = await fetch(fileUrl, { mode: 'cors', cache: 'no-store' });
