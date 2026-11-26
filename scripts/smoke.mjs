@@ -1156,6 +1156,24 @@ check('W3 R9 ④ · B 方案（用户选定）：文字区锁定 38px 硬封顶�
   assert.ok(w3css.includes('background: var(--panel)') && w3css.includes('border: 1px solid var(--line)'), '卡片底色 / 边框保留');
 });
 
+check('W3 R10 ⑤ · 垂直居中成因修正：分区标题选择器必须是直接子级 >，不许误伤卡片标题', () => {
+  // 真机 Chromium 实测（R10）：.section h3 是后代选择器，特异性 (0,1,1) 高于
+  // .card__title (0,1,0)，会把卡片标题套上 margin:20px 0 10px / font-size:15px，
+  // margin 参与 flex 交叉轴对齐 → 38px 文字区里上留白 14.3px / 下留白 5.8px，看着没居中。
+  // 改成 .section > h3 后实测：margin 0/0、字号 14px、上 10.9 / 下 11.1，真正居中。
+  assert.ok(w3css.includes('.section > h3 {'), '分区标题规则必须限定直接子级');
+  assert.ok(!w3css.includes('.section h3 {'), '旧后代选择器会连卡片标题一起命中，必须移除');
+  const sect = w3css.slice(w3css.indexOf('.section > h3 {'), w3css.indexOf('\n', w3css.indexOf('.section > h3 {')));
+  assert.ok(sect.includes('font-size: 15px') && sect.includes('font-weight: 700') && sect.includes('margin: 20px 0 10px'), '分区标题外观一字不变');
+  // 卡片标题的 margin:0 / 14px 不再被高特异性规则覆盖，才谈得上垂直居中
+  assert.ok(w3css.includes('.card__title {') && w3css.includes('margin: 0; width: 100%; font-size: 14px'), '卡片标题恢复 margin:0 与 14px');
+  assert.ok(w3css.includes('align-items: center'), 'flex 居中规则保留');
+  // 上传页 .zone h3 不是 section 直接子级，继续由自己的规则控制 → 内部页面零影响
+  assert.ok(w3css.includes('.zone h3 { margin: 0 0 8px'), '上传页三区标题规则不动');
+  const uploadHtml2 = readFileSync(join(ROOT, 'web/upload/index.html'), 'utf8');
+  assert.ok(uploadHtml2.includes('<div class="zone">') && uploadHtml2.includes('<h3>① 主控台单文件</h3>'), '上传页结构不动');
+});
+
 check('W3：改过的前端源码必须连带重出 vendor（防线上与源码口径分叉）', () => {
   // esbuild 默认把中文转义成 \uXXXX，故用 minify 后仍稳定、且旧产物里没有的 ASCII 标记
   assert.ok(w3SiteVendor.includes('card__art'), 'site.js 应含新卡片结构（旧产物没有）');
@@ -1177,8 +1195,10 @@ check('W3 先红后绿：回退 5 列 / 3:4 / 新标签 / 返回按钮 / 两组�
   assert.ok('padding: 12px 12px 14px' !== 'height: 38px', 'R5 旧大留白会红');
   assert.ok('min-height: 40px' !== 'height: 38px; padding: 0 10px; overflow: hidden', 'R6 只给下限会红');
   assert.ok('padding: 5px 10px 7px' !== 'height: 38px', 'R7 贴顶无留白会红（用户不要紧贴字）');
+  assert.notEqual('.section h3 {', '.section > h3 {', 'R10：旧后代选择器会让垂直居中失效，回退应红');
   assert.ok(w3css.includes('repeat(5, minmax(0, 1fr))') && w3css.includes('aspect-ratio: 3 / 4'), '还原后应变绿');
   assert.ok(w3css.includes('align-items: start') && w3css.includes('height: 38px') && !w3css.includes('min-height: 40px'), 'R9 还原后应变绿');
+  assert.ok(w3css.includes('.section > h3 {') && !w3css.includes('.section h3 {'), 'R10 还原后应变绿');
   assert.ok(siteApp.includes('target="_blank" rel="noopener"') && mmApp.includes('mind.scaleFit?.()'));
 });
 

@@ -57,8 +57,14 @@ main { max-width: 1080px; margin: 0 auto; padding: 28px 20px 56px; }
   font-size: 17px; letter-spacing: .06em; color: var(--accent);
   border-left: 3px solid var(--accent); padding-left: 10px; margin: 0 0 16px;
 }
-/* W3：分区标题只留体量类型、去掉计数，加粗提亮 */
-.section h3 { font-size: 15px; color: var(--accent-soft); font-weight: 700; margin: 20px 0 10px; }
+/* W3：分区标题只留体量类型、去掉计数，加粗提亮。
+   R10 修正：必须是「直接子级」>。首页结构是 <section class="section"><h3>战役</h3><div class="grid"><a class="card">…<h3 class="card__title">…，
+   原先的 .section h3 是后代选择器，会连卡片标题一起命中，且特异性 (0,1,1) 高于 .card__title (0,1,0)：
+   卡片标题被悄悄套上 margin:20px 0 10px 与 font-size:15px。margin 参与 flex 交叉轴对齐后，
+   38px 文字区里文字变成「上留白 14.3px / 下留白 5.8px」，看起来没垂直居中。
+   改成 > 后，分区标题样式一字不变，卡片标题恢复 margin:0 / 14px，真正上下各约 10px 居中。
+   上传页 .zone h3 不是 section 直接子级，继续由 .zone h3 控制，内部页面零影响。 */
+.section > h3 { font-size: 15px; color: var(--accent-soft); font-weight: 700; margin: 20px 0 10px; }
 
 /* W3：桌面一行 5 张卡；中等屏 3 列、窄屏 2 列（不挤成细条） */
 .grid { display: grid; gap: 16px; grid-template-columns: repeat(5, minmax(0, 1fr)); align-items: start; }
