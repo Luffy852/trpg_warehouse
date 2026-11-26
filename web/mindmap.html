@@ -10,8 +10,12 @@
 <body class="mindmap-page">
 <header class="site-header">
   <div class="site-header__inner">
-    <div class="brand"><h1>思维导图预览</h1><span>只读 · 浏览器内直接渲染 .xmind</span></div>
-    <p class="disclaimer">结构可读预览，不等同 XMind 客户端 100% 还原；原文件保持唯一真值，不生成第二份副本。</p>
+    <!-- W3 ④：主标题写成「思维导图 · 模组名」，由 vendor/mindmap.js 拿到条目后填入；整块靠左 -->
+    <!-- W3 ⑤：不再显示绿框技术性说明 -->
+    <div class="brand">
+      <h1 id="mapTitle">思维导图</h1>
+      <span class="mm-back"><a id="backLink" href="/">← 返回模组条目页</a></span>
+    </div>
   </div>
 </header>
 <div id="status" class="status-bar">正在载入思维导图…</div>

@@ -290,7 +290,14 @@ function setProgress(done, total, label) {
   $('progressBar').style.width = `${total ? Math.round((done / total) * 100) : 0}%`;
 }
 
+function hideProgress() {
+  $('progress').hidden = true;
+  $('progressBar').style.width = '0%';
+}
+
 function showBad(title, lines) {
+  // W3 ⑧：被拒时只显示失败信息，不再留「本地预检… 0/1」这类静态进度标识
+  hideProgress();
   const box = $('result');
   box.className = 'result bad';
   box.hidden = false;
@@ -313,7 +320,7 @@ async function submit() {
   const btn = $('submitBtn');
   btn.disabled = true;
   $('result').hidden = true;
-  setProgress(0, 1, '本地预检…');
+  hideProgress();
   try {
     const meta = readForm();
     const { errors, refs, rels, sizes, skipped, coverRel, effective } = await precheck(meta);

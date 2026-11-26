@@ -1025,6 +1025,132 @@ check('R10 先红后绿：回退「翻全桶」「删前缀外对象」「8GB �
   assert.ok(calibrateFn.includes('MODULE_KEY_PREFIX'));
 });
 
+// ---------- W3 · 体验收尾（美术 + ⑧⑨⑥③，一次性一个增量包）----------
+const w3css = readFileSync(join(ROOT, 'web/assets/site.css'), 'utf8');
+const w3HomeHtml = readFileSync(join(ROOT, 'web/index.html'), 'utf8');
+const w3ModuleHtml = readFileSync(join(ROOT, 'web/module.html'), 'utf8');
+const w3MmHtml = readFileSync(join(ROOT, 'web/mindmap.html'), 'utf8');
+const w3AdminMmHtml = readFileSync(join(ROOT, 'web/upload/mindmap.html'), 'utf8');
+const w3SiteVendor = readFileSync(join(ROOT, 'web/vendor/site.js'), 'utf8');
+const w3MmVendor = readFileSync(join(ROOT, 'web/vendor/mindmap.js'), 'utf8');
+const w3UploadVendor = readFileSync(join(ROOT, 'web/vendor/upload.js'), 'utf8');
+
+check('W3 ⑬：首页卡片只留「封面 + 模组名」，规则行与简介都不进卡片', () => {
+  assert.ok(siteApp.includes('card__art'), '封面应作为图片元素完整渲染');
+  assert.ok(siteApp.includes('card__cover-ph'), '无封面时用规则名占位');
+  assert.ok(!siteApp.includes('card__meta') && !siteApp.includes('card__summary'), '不再生成规则行 / 简介');
+  assert.ok(siteApp.includes('SYSTEM_LABELS[mod.system]'), '占位文字取规则名称，模组名仍显示');
+});
+
+check('W3 ⑬：分区标题计数全部去掉（含 COC / 其他大区），只留体量类型', () => {
+  assert.ok(!siteApp.includes('· ${group.length}'), 'DND 下 kind 标题不再带 · N');
+  assert.ok(!siteApp.includes('· ${dnd.length}'), 'DND 大区标题不带计数');
+  assert.ok(w3css.includes('.section h3') && w3css.includes('font-weight: 700'), '体量类型加粗提亮');
+});
+
+check('W3 ⑬ 方案甲：桌面一行 5 列，3:4 竖版封面轻微裁切填满', () => {
+  assert.ok(w3css.includes('repeat(5, minmax(0, 1fr))'), '宽屏固定 5 列');
+  assert.ok(w3css.includes('repeat(3, minmax(0, 1fr))'), '中等屏 3 列不挤成细条');
+  assert.ok(w3css.includes('repeat(2, minmax(0, 1fr))'), '窄屏 2 列');
+  assert.ok(w3css.includes('aspect-ratio: 3 / 4'), '封面容器按 3:4');
+  assert.ok(w3css.includes('object-fit: cover'), '轻微裁切填满（用户选方案甲）');
+  assert.ok(!w3css.includes('height: 132px') && !w3css.includes('height: 100px'), '旧的横条封面高度必须移除');
+});
+
+check('W3 ⑭ A 方案：条目页内容在 1080 外层里收窄到 760 并靠左，窄屏自然铺满', () => {
+  assert.ok(w3css.includes('body[data-page="module"] #app { max-width: 760px; margin-right: auto; }'));
+});
+
+check('W3 ⑥：条目页思维导图与主控台一样新标签打开，前台书架零改动', () => {
+  assert.ok(siteApp.includes('href="${escapeHtml(mindmapUrl)}" target="_blank" rel="noopener"'), '导图入口补新标签');
+  assert.ok(siteApp.includes('href="${escapeHtml(consoleUrl)}" target="_blank" rel="noopener"'), '主控台保持新标签');
+  assert.ok(!siteApp.includes('/upload/admin.html'), '不把管理台信息搬到前台');
+});
+
+check('W3 ④⑥：主标题「思维导图 · 模组名」左对齐，正式 / 草稿两壳都有返回按钮', () => {
+  assert.ok(mmApp.includes('思维导图 · ${mod.title}'), '标题按条目动态写入');
+  assert.ok(mmApp.includes('/module.html?slug=') && mmApp.includes('/upload/preview.html?slug='), '返回目标按正式 / 草稿分流');
+  for (const html of [w3MmHtml, w3AdminMmHtml]) {
+    assert.ok(html.includes('id="mapTitle"') && html.includes('id="backLink"'), '两个壳都提供标题与返回按钮');
+    assert.ok(html.includes('返回模组条目页'));
+  }
+  assert.ok(w3css.includes('.mindmap-page .site-header__inner { max-width: none; margin: 0; }'), '标题靠画面左侧，不再居中');
+});
+
+check('W3 ⑤①：绿框技术说明移除、状态行去掉技术读数，版权与失败兜底保留', () => {
+  for (const html of [w3MmHtml, w3AdminMmHtml]) {
+    assert.ok(!html.includes('不等同 XMind 客户端 100% 还原'), '绿框说明删');
+    assert.ok(!html.includes('class="disclaimer"'), '导图页不再挂技术性说明');
+    assert.ok(html.includes('下载原文件'), '解析失败兜底保留（v6 定稿）');
+  }
+  assert.ok(mmApp.includes('已载入 · Ctrl / ⌘ + 滚轮缩放'), '状态行压成非技术用语，仍说明按键操作');
+  assert.ok(!mmApp.includes('个工作表') && !mmApp.includes('${formatLabel}'), '格式标签 / 工作表数不再显示');
+  assert.ok(siteApp.includes('非官方粉丝翻译，禁止商用'), '条目页版权完整版保留');
+  for (const html of [w3HomeHtml, w3ModuleHtml]) {
+    assert.ok(html.includes('非官方粉丝翻译 / 禁商用'), '页顶版权声明保留');
+  }
+});
+
+check('W3 ③：导图一打开就适配屏幕，页面锁一屏、不再长滚动条；不碰 v6 缩放口径', () => {
+  assert.ok(mmApp.includes('mind.scaleFit?.()'), '用库自带适应屏幕能力');
+  assert.ok(!/\bscaleMax\s*:/.test(mmApp) && !/\bscaleMin\s*:/.test(mmApp), '不改上下限');
+  assert.ok(mmApp.includes('scaleSensitivity: 0.1'), '步进仍 0.1');
+  assert.ok(w3css.includes('body.mindmap-page { height: 100vh; overflow: hidden'), '锁成一屏');
+  assert.ok(w3css.includes('.mindmap-page .map-wrap { flex: 1 1 auto'), '画布吃掉剩余高度');
+  assert.ok(!w3css.includes('calc(100vh - 118px)'), '旧硬算高度移除');
+});
+
+check('W3 ②：左上布局按钮组 / 右下全屏·回中·缩放功能条提对比度且不被遮挡', () => {
+  assert.ok(w3css.includes('左上＝布局按钮组，右下＝全屏 / 回中 / 放大缩小功能条'), '按用户新分类登记，别把两条功能认反');
+  assert.ok(w3css.includes('body.mindmap-page .mind-elixir-toolbar'), '在项目 CSS 覆盖，不改第三方生成物');
+  assert.ok(w3css.includes('.mind-elixir-toolbar.lt') && w3css.includes('.mind-elixir-toolbar.rb'), '两组工具条都覆盖到');
+  assert.ok(w3css.includes('color: var(--accent-soft) !important'), '白底画布上给足对比度');
+  assert.ok(w3css.includes('.mind-elixir-toolbar.rb { right: 16px; bottom: 16px; }'), '右下功能条完整留在视口内');
+});
+
+check('W3 ⑧：被拒时只显示失败信息，不再留静态「本地预检… 0/1」进度标识', () => {
+  assert.ok(uploadAppSrc.includes('function hideProgress()'));
+  assert.ok(!uploadAppSrc.includes("setProgress(0, 1, '本地预检…')"), '开头不再摆静态进度');
+  const showBadBody = uploadAppSrc.slice(uploadAppSrc.indexOf('function showBad'), uploadAppSrc.indexOf('function showOk'));
+  assert.ok(showBadBody.includes('hideProgress()'), '所有失败分支经 showBad 收起进度');
+  assert.ok(uploadAppSrc.includes('showBad('), '失败信息仍走原有回执');
+});
+
+check('W3 ⑨：other 下拉直接写「other（建议模组名标记）」，枚举值与 D1 字段不动', () => {
+  assert.ok(uploadHtml.includes('<option value="other">other（建议模组名标记）</option>'), '只改显示文字');
+  assert.ok(uploadHtml.includes('value="other"'), '枚举值仍是 other');
+  assert.ok(uploadAppSrc.includes('system'), '上传逻辑不改');
+});
+
+check('W3 技术文案复验：前台 footer / 入口小字改成人话，上传页与管理台一行不动', () => {
+  assert.ok(w3HomeHtml.includes('点击浏览即可查看模组') && !w3HomeHtml.includes('资源仅由主控台内链接按需加载'));
+  assert.ok(w3ModuleHtml.includes('开始查看') && !w3ModuleHtml.includes('原文与地图等资源由主控台内部链接取用'));
+  assert.ok(siteApp.includes('在浏览器里查看') && siteApp.includes('打开模组原文与地图'));
+  assert.ok(uploadHtml.includes('本页受 Cloudflare Access 保护；浏览端始终公开只读。'), '内部页面文案保持原样');
+  assert.ok(uploadHtml.includes('平铺在条目根目录；原始文件名写进索引 consoleFile'), '三区输入操作指引不动');
+});
+
+check('W3：改过的前端源码必须连带重出 vendor（防线上与源码口径分叉）', () => {
+  // esbuild 默认把中文转义成 \uXXXX，故用 minify 后仍稳定、且旧产物里没有的 ASCII 标记
+  assert.ok(w3SiteVendor.includes('card__art'), 'site.js 应含新卡片结构（旧产物没有）');
+  assert.ok(w3MmVendor.includes('mapTitle') && w3MmVendor.includes('backLink'), 'mindmap.js 应含新标题 / 返回按钮（旧产物没有）');
+  assert.ok(w3UploadVendor.includes('style.width="0%"'), 'upload.js 应含收起进度逻辑（旧产物没有）');
+  assert.ok(w3UploadVendor.includes(String(5 * GB_UNIT)), 'upload.js 仍随仓库重出且 5GB 口径不变');
+  assert.ok(buildScript.includes("['web/assets/app.js', 'web/vendor/site.js']"));
+  assert.ok(buildScript.includes("['web/assets/mindmap-app.js', 'web/vendor/mindmap.js']"));
+  assert.ok(buildScript.includes("['web/assets/upload-app.js', 'web/vendor/upload.js']"));
+});
+
+check('W3 先红后绿：回退 5 列 / 3:4 / 新标签 / 返回按钮 / 两组功能条 / ⑧⑨，断言真的会红；还原后绿', () => {
+  assert.notEqual('repeat(auto-fill, minmax(240px, 1fr))', 'repeat(5, minmax(0, 1fr))', '旧自动列宽会红');
+  assert.notEqual('height: 132px', 'aspect-ratio: 3 / 4', '旧横条封面会红');
+  assert.ok(!'<a class="entry" href="${escapeHtml(mindmapUrl)}">'.includes('target="_blank"'), '旧导图入口会红');
+  assert.ok(!'<h1>思维导图预览</h1>'.includes('id="mapTitle"'), '旧标题会红');
+  assert.ok(!'other</option>'.includes('建议模组名标记'), '旧 other 文案会红');
+  assert.ok(w3css.includes('repeat(5, minmax(0, 1fr))') && w3css.includes('aspect-ratio: 3 / 4'), '还原后应变绿');
+  assert.ok(siteApp.includes('target="_blank" rel="noopener"') && mmApp.includes('mind.scaleFit?.()'));
+});
+
 // ---------- 汇总 ----------
 console.log(`\n=== 通过 ${results.length} 项断言 ===`);
 console.log(`

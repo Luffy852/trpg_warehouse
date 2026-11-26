@@ -54,6 +54,16 @@ async function main() {
     return fail('无法读取条目索引', err.message);
   }
 
+  // W3 ④⑥：主标题写成「思维导图 · 模组名」；返回按钮按正式 / 草稿壳指回各自的条目页。
+  const titleEl = document.getElementById('mapTitle');
+  const backEl = document.getElementById('backLink');
+  if (titleEl) titleEl.textContent = `思维导图 · ${mod.title}`;
+  if (backEl) {
+    backEl.href = ADMIN
+      ? `/upload/preview.html?slug=${encodeURIComponent(slug)}`
+      : `/module.html?slug=${encodeURIComponent(slug)}`;
+  }
+
   const fileUrl = mod.baseUrl + encodeRelative(mod.mindmapFile);
   // 解析失败时的「下载原文件」兜底：前台走 /api/download；受保护预览态直接指 R2 原文件
   // （/api/download 带 status='published'，草稿会 404，不能把死链留给后台预览）。
@@ -80,7 +90,6 @@ async function main() {
   // 有 content.json 优先；只有「请升级」占位 content.xml 会直接给可见错误，不留空图
   const inspected = inspectXmind(entries);
   if (!inspected.ok) return fail(inspected.reason);
-  const formatLabel = inspected.label;
 
   let sheets;
   try {
@@ -93,7 +102,8 @@ async function main() {
     return fail('解析结果为空，未拿到任何工作表');
   }
 
-  statusEl.textContent = `✓ ${formatLabel} · ${sheets.length} 个工作表 · 只读预览（Ctrl / ⌘ + 滚轮缩放 / 拖拽平移 / 点击折叠）`;
+  // W3 ①：去掉格式标签 / 工作表数等技术读数；保留按键操作提示（v6 B 方案真机口径）
+  statusEl.textContent = '已载入 · Ctrl / ⌘ + 滚轮缩放 / 拖拽平移 / 点击折叠';
   statusEl.classList.remove('error');
   fallbackEl.hidden = true;
 
@@ -113,6 +123,9 @@ async function main() {
   });
 
   mind.init(convertXmindToMindElixir(sheets[0]));
+  // W3 ③：一打开就缩到装得下屏幕。用库自带的适应屏幕能力，它直接赋缩放值，
+  // 不改上下限、不接管滚轮、不改步进，v6 真机验过的全端输入通路原样保留。
+  requestAnimationFrame(() => mind.scaleFit?.());
 
   if (sheets.length > 1) {
     sheetsEl.hidden = false;
@@ -126,6 +139,7 @@ async function main() {
       if (!btn) return;
       const index = Number(btn.dataset.i);
       mind.refresh(convertXmindToMindElixir(sheets[index]));
+      requestAnimationFrame(() => mind.scaleFit?.());
       for (const tab of sheetsEl.querySelectorAll('button')) {
         tab.classList.toggle('active', Number(tab.dataset.i) === index);
       }

@@ -24,15 +24,15 @@ function coverUrl(mod) {
 }
 
 function cardHtml(mod) {
+  // W3：卡片只留「封面 + 模组名」。规则 / 体量已在分区标题里，简介过长不进首页卡片。
+  // 方案甲：封面用 object-fit: cover 轻微裁切填满 3:4；无封面时用规则名称占位，模组名照常显示。
   const cover = coverUrl(mod);
-  const bg = cover ? `style="background-image:url('${escapeHtml(cover)}')"` : '';
+  const art = cover
+    ? `<img class="card__art" src="${escapeHtml(cover)}" alt="封面" loading="lazy">`
+    : `<span class="card__cover-ph">${escapeHtml(SYSTEM_LABELS[mod.system] ?? mod.system)}</span>`;
   return `<a class="card" href="/module.html?slug=${encodeURIComponent(mod.slug)}">
-    <div class="card__cover" ${bg}></div>
-    <div class="card__body">
-      <h3 class="card__title">${escapeHtml(mod.title)}</h3>
-      <p class="card__meta">${escapeHtml(SYSTEM_LABELS[mod.system] ?? mod.system)} · ${escapeHtml(KIND_LABELS[mod.kind] ?? mod.kind)}</p>
-      <p class="card__summary">${escapeHtml(mod.summary)}</p>
-    </div>
+    <div class="card__cover">${art}</div>
+    <div class="card__body"><h3 class="card__title">${escapeHtml(mod.title)}</h3></div>
   </a>`;
 }
 
@@ -51,7 +51,7 @@ function renderHome(modules) {
     for (const kind of ['campaign', 'module', 'encounter']) {
       const group = dnd.filter((m) => m.kind === kind);
       if (!group.length) continue;
-      html += `<h3>${escapeHtml(KIND_LABELS[kind])} · ${group.length}</h3><div class="grid">${group.map(cardHtml).join('')}</div>`;
+      html += `<h3>${escapeHtml(KIND_LABELS[kind])}</h3><div class="grid">${group.map(cardHtml).join('')}</div>`;
     }
     html += '</section>';
     sections.push(html);
@@ -61,7 +61,7 @@ function renderHome(modules) {
     const group = modules.filter((m) => m.system === system);
     if (!group.length) continue;
     sections.push(
-      `<section class="section"><h2>${escapeHtml(SYSTEM_LABELS[system])} · ${group.length}</h2>` +
+      `<section class="section"><h2>${escapeHtml(SYSTEM_LABELS[system])}</h2>` +
       `<div class="grid">${group.map(cardHtml).join('')}</div></section>`,
     );
   }
@@ -89,11 +89,11 @@ function renderModule(modules, slug) {
       <p class="summary">${escapeHtml(mod.summary)}</p>
     </div>
     <div class="entries">
-      <a class="entry" href="${escapeHtml(mindmapUrl)}">
-        <strong>思维导图</strong><small>浏览器内直接预览 .xmind，无需安装客户端</small>
+      <a class="entry" href="${escapeHtml(mindmapUrl)}" target="_blank" rel="noopener">
+        <strong>思维导图</strong><small>在浏览器里查看</small>
       </a>
       <a class="entry" href="${escapeHtml(consoleUrl)}" target="_blank" rel="noopener">
-        <strong>主控台</strong><small>原样打开成品 HTML，内部原文 / 地图链接按需加载</small>
+        <strong>主控台</strong><small>打开模组原文与地图</small>
       </a>
     </div>
     <div class="notice">
