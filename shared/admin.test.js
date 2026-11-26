@@ -7,6 +7,7 @@ import {
   adminRowActions,
   previewTarget,
   canPublish,
+  canUnpublish,
 } from './admin.js';
 
 const rows = [
@@ -43,13 +44,35 @@ test('排序：不修改入参数组；未知体系排最后且组内仍按 slug
   assert.deepEqual(out.slice(-2).map((r) => r.slug), ['aaa', 'zzz']);
 });
 
-test('按钮态：第 1 步草稿行只亮「上架」，下架 / 删除永远灰着', () => {
+test('按钮态：草稿行只亮「上架」，已发布行只亮「下架」，删除永远灰着', () => {
   assert.deepEqual(adminRowActions('draft'), {
     previewLabel: '预览', publishEnabled: true, unpublishEnabled: false, removeEnabled: false,
   });
   assert.deepEqual(adminRowActions('published'), {
-    previewLabel: '条目页', publishEnabled: false, unpublishEnabled: false, removeEnabled: false,
+    previewLabel: '条目页', publishEnabled: false, unpublishEnabled: true, removeEnabled: false,
   });
+  assert.notEqual(
+    adminRowActions('draft').publishEnabled,
+    adminRowActions('published').publishEnabled,
+    '上架 / 下架必须互斥，不能同时亮',
+  );
+});
+
+test('下架写口：只接受 published → draft，草稿 / 未知状态一律拒', () => {
+  assert.equal(canUnpublish('published'), true);
+  assert.equal(canUnpublish('draft'), false);
+  assert.equal(canUnpublish(undefined), false);
+  assert.equal(canUnpublish('anything'), false);
+});
+
+test('先红后绿：把下架按钮回退成「永远灰着」，断言真的会红；还原后绿', () => {
+  const legacy = (status) => ({
+    previewLabel: status === 'draft' ? '预览' : '条目页',
+    publishEnabled: status === 'draft', unpublishEnabled: false, removeEnabled: false,
+  });
+  assert.equal(legacy('published').unpublishEnabled, false, '旧实现应让断言变红');
+  assert.notDeepEqual(legacy('published'), adminRowActions('published'));
+  assert.equal(adminRowActions('published').unpublishEnabled, true, '还原后应变绿');
 });
 
 test('预览按钮二态：草稿＝预览（受保护壳），已发布＝条目页（前台原页）', () => {

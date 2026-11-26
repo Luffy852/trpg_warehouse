@@ -11,7 +11,7 @@ import { importXMindFile, convertXmindToMindElixir } from '@mind-elixir/import-x
 import { inspectXmind } from '../shared/xmind.js';
 import { validateMeta, slugify } from '../shared/contract.js';
 import { decideUploadMode } from '../shared/update-mode.js';
-import { sortAdminRows, adminRowActions, previewTarget, canPublish, statusLabel, systemKindLabel } from '../shared/admin.js';
+import { sortAdminRows, adminRowActions, previewTarget, canPublish, canUnpublish, statusLabel, systemKindLabel } from '../shared/admin.js';
 import {
   stripTopFolder,
   buildUploadPlan,
@@ -181,15 +181,15 @@ check('封面与已有文件同名 → 显式拒绝，不静默覆盖', () => {
 });
 
 // ---------- 2d. 包③ / 包④：Worker 兜底 + 上传页版式与文案回归防护 ----------
-check('Worker 6 个 API 分支 return await：异步错误不绕过 catch（JSON 500/413/503 不退化成 1101）', () => {
+check('Worker 7 个 API 分支 return await：异步错误不绕过 catch（JSON 500/413/503 不退化成 1101）', () => {
   const src = readFileSync(join(ROOT, 'worker/src/index.ts'), 'utf8');
-  const names = '(Modules|Prepare|Finalize|Download|AdminModules|AdminPublish)';
+  const names = '(Modules|Prepare|Finalize|Download|AdminModules|AdminPublish|AdminUnpublish)';
   const bare = [...src.matchAll(new RegExp(`\\breturn\\s+handle${names}\\s*\\(`, 'g'))].map((m) => m[1]);
   assert.deepEqual(bare, [], `仍有未 await 的分支：${bare.join('、')}`);
   const awaited = [...src.matchAll(new RegExp(`\\breturn\\s+await\\s+handle${names}\\s*\\(`, 'g'))].map((m) => m[1]);
   assert.deepEqual(
     awaited.sort(),
-    ['Finalize', 'Download', 'Modules', 'Prepare', 'AdminModules', 'AdminPublish'].sort(),
+    ['Finalize', 'Download', 'Modules', 'Prepare', 'AdminModules', 'AdminPublish', 'AdminUnpublish'].sort(),
   );
 });
 check('包④：slug 标签改短文案 + form-grid 内 label 统一预留两行高度（防中文折行把输入框推后）', () => {
@@ -543,17 +543,22 @@ const siteApp = readFileSync(join(ROOT, 'web/assets/app.js'), 'utf8');
 const mmApp = readFileSync(join(ROOT, 'web/assets/mindmap-app.js'), 'utf8');
 const buildScript = readFileSync(join(ROOT, 'scripts/build-web.mjs'), 'utf8');
 
-check('W2-c ①：两个管理台接口都在 /api/upload* 受保护 path 下，且 Worker 内显式 requireAccess', () => {
-  assert.ok(adminWorker.includes("path === '/api/upload/admin/modules'"));
-  assert.ok(adminWorker.includes("path === '/api/upload/admin/publish'"));
+check('W2-c ①②：三个管理台接口都在 /api/upload* 受保护 path 下，且 Worker 内显式 requireAccess', () => {
+  for (const p of [
+    '/api/upload/admin/modules',
+    '/api/upload/admin/publish',
+    '/api/upload/admin/unpublish',
+  ]) {
+    assert.ok(adminWorker.includes(`path === '${p}'`), `缺少受保护接口 ${p}`);
+  }
   const block = adminWorker.slice(
     adminWorker.indexOf("'/api/upload/admin/modules'"),
     adminWorker.indexOf("'/api/upload/prepare'"),
   );
   assert.equal(
     (block.match(/requireAccess\(request, env\)/g) ?? []).length,
-    2,
-    '两个新分支都必须在 Worker 内验 JWT 兜底（隐藏路径 ≠ 鉴权）',
+    3,
+    '三个分支都必须在 Worker 内验 JWT 兜底（隐藏路径 ≠ 鉴权）',
   );
 });
 
@@ -578,7 +583,7 @@ check('W2-c ①：公开列表仍只返 published；管理台列表查全量且�
 check('W2-c ①：上架写口只改 status，draft→published + 写后读回，不动 R2 / 预留量 / 容量账', () => {
   const fn = adminWorker.slice(
     adminWorker.indexOf('async function handleAdminPublish'),
-    adminWorker.indexOf('// 上架前权威校验'),
+    adminWorker.indexOf('async function handleAdminUnpublish'),
   );
   assert.ok(fn.includes('canPublish'), '迁移判定走 shared 唯一口径');
   assert.ok(fn.includes("status = 'published'") && fn.includes("AND status = 'draft'"), '只翻 draft，防重复点');
@@ -621,18 +626,22 @@ check('W2-c ①：管理台不另写排序 / 状态文案；slug 纯文本只读
   assert.equal(statusLabel('draft'), '草稿');
 });
 
-check('W2-c ①：预览按钮按状态二态；第 1 步只亮上架，下架/删除灰着不生效、无额外注释', () => {
+check('W2-c ①②：预览按钮按状态二态；上架 / 下架互斥点亮，删除永远灰着、无额外注释', () => {
   assert.equal(previewTarget('abc', 'draft'), '/upload/preview.html?slug=abc');
   assert.equal(previewTarget('abc', 'published'), '/module.html?slug=abc');
   assert.equal(adminRowActions('draft').previewLabel, '预览');
   assert.equal(adminRowActions('published').previewLabel, '条目页');
   assert.equal(adminRowActions('draft').publishEnabled, true);
-  assert.equal(adminRowActions('published').publishEnabled, false);
   assert.equal(adminRowActions('draft').unpublishEnabled, false);
+  assert.equal(adminRowActions('published').publishEnabled, false);
+  assert.equal(adminRowActions('published').unpublishEnabled, true);
   assert.equal(adminRowActions('published').removeEnabled, false);
-  assert.equal((adminAppSrc.match(/<button[^>]*disabled>/g) ?? []).length, 2, '下架 / 删除两个按钮必须 disabled');
+  // 删除按钮仍是字面 disabled；上架 / 下架按状态动态禁用，不能写死灰着
+  assert.equal((adminAppSrc.match(/<button[^>]*disabled>/g) ?? []).length, 1, '只有「删除」应写死 disabled');
+  assert.ok(adminAppSrc.includes('${actions.unpublishEnabled'), '下架按钮必须按按钮态动态禁用');
   assert.ok(!adminAppSrc.includes('后续开放'), '用户明确不要额外注释');
   assert.ok(adminAppSrc.includes('data-action="publish"'));
+  assert.ok(adminAppSrc.includes('data-action="unpublish"'));
 });
 
 check('W2-c ①：草稿预览壳都在 /upload/ 受保护路径下，且复用同一份 vendor（不改前台页面）', () => {
@@ -658,15 +667,16 @@ check('W2-c ①：打包脚本重出 admin.js；4 个 vendor 产物都随仓库�
   }
 });
 
-check('W2-c ①：第 1 步不碰删除 / 容量账 / 自动翻仓库（留给第 3 步）', () => {
+check('W2-c ①②：上架 / 下架都不碰删除 / 容量账 / 自动翻仓库（留给第 3 步）', () => {
   const handlers = adminWorker.slice(
     adminWorker.indexOf('async function handleAdminModules'),
     adminWorker.indexOf('// 上架前权威校验'),
   );
   const texts = `${handlers}\n${adminAppSrc}`;
   for (const forbidden of ['ASSETS_BUCKET.delete', 'upload_locks', 'total_bytes', 'setInterval(', '.list(']) {
-    assert.ok(!texts.includes(forbidden), `第 1 步不该出现 ${forbidden}`);
+    assert.ok(!texts.includes(forbidden), `第 1、2 步不该出现 ${forbidden}`);
   }
+  assert.equal(adminRowActions('published').removeEnabled, false, '删除按钮第 3 步才亮');
 });
 
 check('W2-c ① 先红后绿：把「按路径切数据源」回退成一律公开，草稿预览断言真的会红；还原后绿', () => {
@@ -678,12 +688,70 @@ check('W2-c ① 先红后绿：把「按路径切数据源」回退成一律公�
   assert.equal(canPublish('published'), false, '已发布重复点上架应被拒');
 });
 
+// ---------- W2-c 第 2 步 · 下架（可逆） + 预览/条目页新标签 ----------
+check('W2-c ②：下架写口只改 status，published→draft + 写后读回，不动 R2 / 预留量 / 容量账', () => {
+  const fn = adminWorker.slice(
+    adminWorker.indexOf('async function handleAdminUnpublish'),
+    adminWorker.indexOf('// 上架前权威校验'),
+  );
+  assert.ok(fn.includes('canUnpublish'), '迁移判定走 shared 唯一口径');
+  assert.ok(fn.includes("status = 'draft'") && fn.includes("AND status = 'published'"), '只翻 published，防重复点');
+  assert.ok(fn.includes('SELECT status FROM modules WHERE slug = ?'), '写后读回断言不能省');
+  assert.ok(fn.includes('INDEX_VERIFY_FAILED'));
+  assert.ok(fn.includes('isWritesEnabled(env)'), '写口受一键熔断管住');
+  assert.ok(fn.includes("status: 'draft'") && fn.includes('verified: true'));
+  for (const forbidden of ['ASSETS_BUCKET', 'upload_locks', 'total_bytes', 'head(', '.delete(']) {
+    assert.ok(!fn.includes(forbidden), `下架不该碰 ${forbidden}`);
+  }
+});
+
+check('W2-c ②：下架与上架互斥，脏状态一律拒，不会误写', () => {
+  assert.equal(canUnpublish('published'), true);
+  assert.equal(canUnpublish('draft'), false);
+  assert.equal(canPublish('draft'), true);
+  assert.equal(canPublish('published'), false);
+  assert.equal(canPublish('x') || canUnpublish('x'), false);
+});
+
+check('W2-c ②：前端下架按钮 → 确认 → 写口 → 拉公开列表断言「卡片 -1」', () => {
+  const fn = adminAppSrc.slice(
+    adminAppSrc.indexOf('async function unpublish'),
+    adminAppSrc.indexOf("app.addEventListener('click'"),
+  );
+  assert.ok(fn.includes('confirm('), '下架前要弹一句确认，防手滑');
+  assert.ok(fn.includes("'/api/upload/admin/unpublish'"));
+  assert.ok(fn.includes("data.status !== 'draft'"), '必须校验回执状态');
+  assert.ok(fn.includes('baseline - 1'), '行为断言必须是卡片 -1');
+  assert.ok(fn.includes('list.some((m) => m.slug === slug)'), '还要断言该条目从公开列表消失');
+  assert.ok(fn.includes('恢复发布'), '回执要告诉用户可恢复，方便按真机流程再验上架');
+  assert.ok(fn.includes('await load()'), '刷新管理台让该行变草稿、按钮态随之翻转');
+});
+
+check('W2-c ②：预览 / 条目页按钮一律新标签打开，两个状态共用同一个按钮位', () => {
+  const a = adminAppSrc.match(/<a class="btn btn--sm"[^>]*>/)?.[0] ?? '';
+  assert.ok(a.includes('target="_blank"'), '应新标签打开（用户 R6-3）');
+  assert.ok(a.includes('rel="noopener"'), '新标签必须带 noopener');
+  assert.ok(a.includes('href="${escapeHtml(preview)}"'), '两个状态共用同一个 href 变量，不另开一个按钮');
+  assert.equal((adminAppSrc.match(/<a class="btn btn--sm"/g) ?? []).length, 1, '每行只有一个预览/条目页按钮位');
+});
+
+check('W2-c ② 先红后绿：回退「下架永远灰着」与「新标签」，断言真的会红；还原后绿', () => {
+  const legacyActions = (status) => ({
+    previewLabel: status === 'draft' ? '预览' : '条目页',
+    publishEnabled: status === 'draft', unpublishEnabled: false, removeEnabled: false,
+  });
+  assert.notDeepEqual(legacyActions('published'), adminRowActions('published'), '旧按钮态应让断言变红');
+  const legacyAnchor = '<a class="btn btn--sm" href="${escapeHtml(preview)}">';
+  assert.ok(!legacyAnchor.includes('target="_blank"'), '旧链接应让断言变红');
+  assert.ok(adminAppSrc.includes('target="_blank"') && adminAppSrc.includes('rel="noopener"'), '还原后应变绿');
+});
+
 // ---------- 汇总 ----------
 console.log(`\n=== 通过 ${results.length} 项断言 ===`);
 console.log(`
 沙盒已验：
   · 单元测试 npm test（契约 / 路径 / 依赖解析 / 单文件同名显式跳过 / 封面落条目根 / xmind 格式判定 / 成本闸门 / fail-closed / 一键熔断 / W2-b 更新模式唯一口径）
-  · 本冒烟 ${results.length} 项：三区输入 → 剥顶层 → R2 key 格局 → 单文件同名显式跳过 → 封面并入 → Worker return await 静态审计 → 上传页版式回归 → W2-b 勾选项 / schema / token / Worker 双侧校验 / D-01 断言分叉 → **W2-c ① 管理台受保护路由 / 全量列表 / 只改 status 写口 / 五列与按钮态 / 草稿预览壳 / 前台零改动** → 依赖逐项断言 → 两代 xmind 出图 → 成本闸门 → 反模式静态审计
+  · 本冒烟 ${results.length} 项：三区输入 → 剥顶层 → R2 key 格局 → 单文件同名显式跳过 → 封面并入 → Worker return await 静态审计 → 上传页版式回归 → W2-b 勾选项 / schema / token / Worker 双侧校验 / D-01 断言分叉 → **W2-c ① 管理台受保护路由 / 全量列表 / 上架只改 status / 五列与按钮态 / 草稿预览壳 / 前台零改动** → **W2-c ② 下架只改 status / 卡片 -1 行为断言 / 上架下架互斥 / 预览与条目页新标签打开** → 依赖逐项断言 → 两代 xmind 出图 → 成本闸门 → 反模式静态审计
   · Worker TypeScript 类型检查、Worker bundle 体积、前端 vendor 产物语法
 
 只能真机 / 用户本地验（见档案 §0.6）：

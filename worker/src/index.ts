@@ -7,7 +7,7 @@ import { presignPut } from './presign';
 import { signToken, verifyToken } from './token';
 import { validateMeta } from '../../shared/contract.js';
 import { decideUploadMode } from '../../shared/update-mode.js';
-import { sortAdminRows, canPublish } from '../../shared/admin.js';
+import { sortAdminRows, canPublish, canUnpublish } from '../../shared/admin.js';
 import { isUnsafeRelativePath, findDuplicateNames, buildUploadPlan } from '../../shared/paths.js';
 import { extractReferences, buildAvailableSet, findMissingDeps } from '../../shared/deps.js';
 import {
@@ -54,8 +54,8 @@ export default {
       // 见档案 §0.6「return await 兜底隐患」，W1 跑通后单独修正，不与 #5 混改。
       if (path === '/api/modules' && request.method === 'GET') return await handleModules(env);
 
-      // ── W2-c 第 1 步 · 模组管理台（全部在 /api/upload* 这条已受 Access 保护的 path 下）──
-      // 全量列表含 draft；写口只改 status，不动 R2 / upload_locks / 容量账。
+      // ── W2-c · 模组管理台（全部在 /api/upload* 这条已受 Access 保护的 path 下）──
+      // 全量列表含 draft；上架 / 下架写口只改 status，不动 R2 / upload_locks / 容量账。
       if (path === '/api/upload/admin/modules' && request.method === 'GET') {
         await requireAccess(request, env);
         return await handleAdminModules(env);
@@ -63,6 +63,10 @@ export default {
       if (path === '/api/upload/admin/publish' && request.method === 'POST') {
         await requireAccess(request, env);
         return await handleAdminPublish(request, env);
+      }
+      if (path === '/api/upload/admin/unpublish' && request.method === 'POST') {
+        await requireAccess(request, env);
+        return await handleAdminUnpublish(request, env);
       }
 
       if (path === '/api/upload/prepare' && request.method === 'POST') {
@@ -180,6 +184,54 @@ async function handleAdminPublish(request: Request, env: Env): Promise<Response>
     ok: true,
     slug,
     status: 'published',
+    previousStatus: row.status,
+    verified: true,
+  });
+}
+
+// W2-c 第 2 步：下架＝把已发布退回草稿（可逆）。只改 status，文件仍留在 R2、
+// 不重传、不删对象、不动预留量表与累计容量账 —— 账按用户 R4-5 保持只增不减。
+// 与上架对称：写后读回断言，回执成功 ≠ 状态真的翻了。
+async function handleAdminUnpublish(request: Request, env: Env): Promise<Response> {
+  if (!isWritesEnabled(env)) {
+    return json(
+      { error: '写口已熔断，暂停下架（成本保护）', code: 'WRITES_DISABLED' },
+      503,
+    );
+  }
+  const body = (await request.json().catch(() => null)) as { slug?: string } | null;
+  const slug = typeof body?.slug === 'string' ? body.slug : '';
+  if (!slug) return json({ error: '缺少 slug', code: 'BAD_REQUEST' }, 400);
+
+  const row = await env.DB.prepare('SELECT status FROM modules WHERE slug = ?')
+    .bind(slug)
+    .first<{ status: string }>();
+  if (!row) return json({ error: '条目不存在', code: 'NOT_FOUND' }, 404);
+  // 只接受 published → draft：重复点 / 草稿 / 脏状态一律拒，不静默改写
+  if (!canUnpublish(row.status)) {
+    return json(
+      { error: '只有已发布条目可以下架；该条目已是草稿', code: 'ALREADY_DRAFT' },
+      409,
+    );
+  }
+
+  await env.DB.prepare(
+    "UPDATE modules SET status = 'draft', updated_at = datetime('now') WHERE slug = ? AND status = 'published'",
+  )
+    .bind(slug)
+    .run();
+
+  const after = await env.DB.prepare('SELECT status FROM modules WHERE slug = ?')
+    .bind(slug)
+    .first<{ status: string }>();
+  if (!after || after.status !== 'draft') {
+    return json({ error: '状态写入校验失败，未确认下架', code: 'INDEX_VERIFY_FAILED' }, 500);
+  }
+
+  return json({
+    ok: true,
+    slug,
+    status: 'draft',
     previousStatus: row.status,
     verified: true,
   });

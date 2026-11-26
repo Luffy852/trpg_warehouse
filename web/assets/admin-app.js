@@ -1,6 +1,9 @@
-// W2-c 第 1 步 · 模组管理台：受保护的全量账本（含草稿）。
+// W2-c · 模组管理台：受保护的全量账本（含草稿）。
 // 五列纵向一行一模组；排序 / 标签 / 按钮态全部走 shared/admin.js 唯一口径，这里不排第二份。
-// 本步只亮「上架」：「下架 / 删除」灰着不可点、不加额外注释（用户 R5-3）。
+// 第 1 步只亮「上架」；第 2 步点亮「下架」（published → draft，可逆、文件不动）。
+// 「删除」仍灰着不可点（第 3 步），灰按钮不加额外注释（用户 R5-3）。
+// 「预览 / 条目页」同一个按钮位按状态二态，且一律新标签打开（用户 R6-3），
+// 这样看完能直接回到管理台点上架 / 下架，不丢当前列表。
 // 源码在这里，产物是 web/vendor/admin.js（esbuild 打包，随仓库提交）。
 import { systemKindLabel, statusLabel, adminRowActions, previewTarget } from '../../shared/admin.js';
 
@@ -31,9 +34,9 @@ function rowHtml(m) {
     <td>${escapeHtml(statusLabel(m.status))}</td>
     <td>
       <div class="row-actions">
-        <a class="btn btn--sm" href="${escapeHtml(preview)}">${escapeHtml(actions.previewLabel)}</a>
+        <a class="btn btn--sm" href="${escapeHtml(preview)}" target="_blank" rel="noopener">${escapeHtml(actions.previewLabel)}</a>
         <button type="button" class="btn btn--sm" data-action="publish" data-slug="${escapeHtml(m.slug)}" data-title="${escapeHtml(m.title)}"${actions.publishEnabled ? '' : ' disabled'}>上架</button>
-        <button type="button" class="btn btn--sm" disabled>下架</button>
+        <button type="button" class="btn btn--sm" data-action="unpublish" data-slug="${escapeHtml(m.slug)}" data-title="${escapeHtml(m.title)}"${actions.unpublishEnabled ? '' : ' disabled'}>下架</button>
         <button type="button" class="btn btn--sm" disabled>删除</button>
       </div>
     </td>
@@ -69,7 +72,7 @@ async function load() {
   }
 }
 
-// 「回执成功」≠「浏览端多了一张卡」：上架后重新拉公开列表做行为断言（P-05 / V-01）。
+// 「回执成功」≠「浏览端真的变化」：上架 / 下架后都重新拉公开列表做行为断言（P-05 / V-01）。
 async function publish(slug, title) {
   if (!confirm(`确定把「${title}」上架到公开浏览端吗？`)) return;
   setNotice(`正在上架 ${slug} …`);
@@ -107,10 +110,49 @@ async function publish(slug, title) {
   }
 }
 
+async function unpublish(slug, title) {
+  if (!confirm(`确定把「${title}」下架吗？\n浏览端将不再显示；文件仍保留，随时可以重新上架。`)) return;
+  setNotice(`正在下架 ${slug} …`);
+  try {
+    const before = await fetchJSON('/api/modules');
+    const baseline = (before.modules ?? []).length;
+
+    const res = await fetch('/api/upload/admin/unpublish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok !== true || data.status !== 'draft') {
+      throw new Error(data.error ?? `HTTP ${res.status}`);
+    }
+
+    const after = await fetchJSON('/api/modules');
+    const list = after.modules ?? [];
+    const failures = [];
+    if (list.length !== baseline - 1) {
+      failures.push(`期望 ${baseline - 1} 张卡片，实际 ${list.length} 张`);
+    }
+    if (list.some((m) => m.slug === slug)) {
+      failures.push(`浏览端列表里仍能看到 ${slug}`);
+    }
+    if (failures.length) {
+      setNotice(`状态已写入，但浏览端未按预期变化：${failures.join('；')}`, true);
+      return;
+    }
+    setNotice(`下架成功：${slug} · 浏览端卡片 -1（${baseline} → ${list.length}）。文件仍保留，点「上架」即可恢复发布。`);
+    await load(); // 刷新管理台，该行状态与按钮态随之翻转
+  } catch (err) {
+    setNotice(`下架失败：${err?.message ?? String(err)}`, true);
+  }
+}
+
 app.addEventListener('click', (event) => {
-  const btn = event.target.closest('button[data-action="publish"]');
+  const btn = event.target.closest('button[data-action]');
   if (!btn || btn.disabled) return;
-  publish(btn.dataset.slug, btn.dataset.title);
+  const { action, slug, title } = btn.dataset;
+  if (action === 'publish') publish(slug, title);
+  else if (action === 'unpublish') unpublish(slug, title);
 });
 
 load();
