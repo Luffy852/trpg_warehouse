@@ -81,12 +81,19 @@ main { max-width: 1080px; margin: 0 auto; padding: 28px 20px 56px; }
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   color: var(--accent); font-size: 20px; font-weight: 700; letter-spacing: .08em;
 }
-/* W3 R7：文字区回到最朴素的块级流，高度完全由模组名行数决定。
-   上一版用 flex 居中 + min-height 反而把 -webkit-line-clamp 的行盒撑高（真机截图约 97px），
-   这里去掉 flex / min-height，只留极小 padding：单行约 30px，长名两行约 48px，绝不再空出一大块。 */
-.card__body { padding: 5px 10px 7px; }
+/* W3 R9 · B 方案（用户选定）：保留「封面 + 模组名」上下结构，文字区锁定 38px
+   （用户要 35~40：不紧贴字、也不要特别大的上下留白），文字垂直居中。
+   用户明确：卡片底色与封面之间的微小色差、以及边框都没问题，只是留白高度的问题
+   → 不去掉深色文字块、不改卡片底色 / 边框，只把高度封死。
+   与 R6 的本质区别：R6 用 min-height（只给下限）且给标题 flex:1 1 auto，
+   被 -webkit-line-clamp 行盒撑到约 97px；这里用**固定 height + overflow:hidden 硬封顶**，
+   无论内部行盒怎么算都不会再长高。 */
+.card__body {
+  height: 38px; padding: 0 10px; overflow: hidden;
+  display: flex; align-items: center;
+}
 .card__title {
-  margin: 0; font-size: 14px; line-height: 1.3;
+  margin: 0; width: 100%; font-size: 14px; line-height: 1.3;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
 
@@ -273,8 +280,8 @@ body.mindmap-page .mind-elixir-toolbar.rb { right: 16px; bottom: 16px; }
   .site-header { padding: 18px 16px 14px; }
   main { padding: 20px 16px 40px; }
   .brand h1 { font-size: 19px; }
-  /* W3：窄屏沿用 3:4 封面比例，不再压成 100px 横条 */
-  .card__body { padding: 4px 8px 6px; }
+  /* W3 R9：窄屏沿用 3:4 封面，文字区同样锁定但略矮（36px） */
+  .card__body { height: 36px; padding: 0 8px; }
   .card__title { font-size: 13px; }
   .mindmap-page .mm-back a { font-size: 11px; }
 }

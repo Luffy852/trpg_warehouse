@@ -1136,14 +1136,24 @@ check('W3 调节轮 ①：首页顶部不再挂「点击浏览」说明，页脚
   assert.ok(w3HomeHtml.includes('<h1>TRPG 模组库</h1>'), '主标题不受影响');
 });
 
-check('W3 R7 ③：文字区去掉 flex 居中 / min-height，回到紧凑块级流（单行约 30px）', () => {
+check('W3 R9 ④ · B 方案（用户选定）：文字区锁定 38px 硬封顶、垂直居中，色差与边框保留', () => {
   assert.ok(w3css.includes('align-items: start; }'), 'grid 行高不拉伸卡片');
   const body = w3css.slice(w3css.indexOf('.card__body {'), w3css.indexOf('.card__title {'));
-  assert.ok(!body.includes('display: flex') && !body.includes('min-height'), 'flex 居中 + min-height 会把 line-clamp 行盒撑高，必须移除');
-  assert.ok(body.includes('padding: 5px 10px 7px'), '上下留白压到最小');
+  // 用户要 35~40：不紧贴字、也不要特别大的上下留白
+  const h = Number((body.match(/height:\s*(\d+)px/) ?? [])[1] ?? 0);
+  assert.ok(h >= 35 && h <= 40, `文字区高度应在 35~40px，实际 ${h}px`);
+  assert.ok(body.includes('overflow: hidden'), '必须硬封顶，防止 line-clamp 行盒再把块撑高');
+  assert.ok(body.includes('align-items: center'), '文字垂直居中，不紧贴上下边');
+  assert.ok(!body.includes('min-height'), 'R6 的 min-height 只是下限、会被撑到 97px，必须不用');
+  assert.ok(w3css.includes('width: 100%; font-size: 14px'), '标题不再用 flex:1 1 auto 参与撑高');
   assert.ok(w3css.includes('line-height: 1.3') && w3css.includes('-webkit-line-clamp: 2'), '标题仍可两行截断');
-  assert.ok(!w3css.includes('padding: 12px 12px 14px') && !w3css.includes('padding: 8px 12px; min-height: 40px'), 'R5 / R6 两版大留白都不复现');
-  assert.ok(w3css.includes('padding: 4px 8px 6px') && !w3css.includes('min-height: 36px'), '窄屏同步压紧');
+  // R5 / R6 / R7 三版都不复现
+  for (const old of ['padding: 12px 12px 14px', 'padding: 8px 12px; min-height: 40px', 'padding: 5px 10px 7px', 'padding: 4px 8px 6px']) {
+    assert.ok(!w3css.includes(old), `旧版留白规则 ${old} 不应残留`);
+  }
+  assert.ok(w3css.includes('.card__body { height: 36px; padding: 0 8px; }'), '窄屏同步锁定 36px');
+  // 用户明确「微小色差和框没问题」→ 卡片底色与边框一个都不许动
+  assert.ok(w3css.includes('background: var(--panel)') && w3css.includes('border: 1px solid var(--line)'), '卡片底色 / 边框保留');
 });
 
 check('W3：改过的前端源码必须连带重出 vendor（防线上与源码口径分叉）', () => {
@@ -1164,10 +1174,11 @@ check('W3 先红后绿：回退 5 列 / 3:4 / 新标签 / 返回按钮 / 两组�
   assert.ok(!'<h1>思维导图预览</h1>'.includes('id="mapTitle"'), '旧标题会红');
   assert.ok(!'other</option>'.includes('建议模组名标记'), '旧 other 文案会红');
   assert.ok('<div class="brand"><h1>TRPG 模组库</h1><span>点击浏览</span></div>'.includes('<span>点击浏览</span>'), '旧顶部说明会红');
-  assert.ok('padding: 12px 12px 14px' !== 'padding: 5px 10px 7px', 'R5 旧大留白会红');
-  assert.ok('display: flex; align-items: center' !== 'display: block', 'R6 的 flex 居中会红');
+  assert.ok('padding: 12px 12px 14px' !== 'height: 38px', 'R5 旧大留白会红');
+  assert.ok('min-height: 40px' !== 'height: 38px; padding: 0 10px; overflow: hidden', 'R6 只给下限会红');
+  assert.ok('padding: 5px 10px 7px' !== 'height: 38px', 'R7 贴顶无留白会红（用户不要紧贴字）');
   assert.ok(w3css.includes('repeat(5, minmax(0, 1fr))') && w3css.includes('aspect-ratio: 3 / 4'), '还原后应变绿');
-  assert.ok(w3css.includes('align-items: start') && w3css.includes('padding: 5px 10px 7px') && !w3css.includes('min-height: 40px'), 'R7 还原后应变绿');
+  assert.ok(w3css.includes('align-items: start') && w3css.includes('height: 38px') && !w3css.includes('min-height: 40px'), 'R9 还原后应变绿');
   assert.ok(siteApp.includes('target="_blank" rel="noopener"') && mmApp.includes('mind.scaleFit?.()'));
 });
 
