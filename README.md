@@ -158,7 +158,7 @@ R2 没有原生硬性账单上限，Cloudflare 的支出管理也不覆盖 R2，
 | `migrations/0001_init.sql` | D1 `modules` 表 + `upload_locks` 预留量表 |
 | `r2-cors.json` | R2 CORS 模板（同时放行 GET 与 PUT） |
 | `scripts/` | 前端打包与离线冒烟 |
-| `docs/` | 部署指引（操作手册）与项目档案；历史档案存于 `docs/archive/` |
+| `docs/` | 部署指引（操作手册）与**当前参考版本项目档案**（`项目档案_trpg-warehouse_v11.md`，放 `docs/` 根）；v1–v10 历史档案只增不删存于 `docs/archive/`，不作依据 |
 
 部署与验收步骤只写在 `docs/部署指引_纯点击.md`；本文档只介绍功能设计与技术方案。
 
