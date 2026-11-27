@@ -1,21 +1,14 @@
 // 浏览端唯一渲染逻辑：源码在这里，产物是 web/vendor/site.js（esbuild 打包）。
 // 纯点击-查看：无搜索框、无文本输入交互；首屏只拉一次 /api/modules。
 import { SYSTEM_LABELS, KIND_LABELS } from '../../shared/contract.js';
+import { escapeHtml, encodeRelative } from '../../shared/web-utils.js';
 
 // W2-c 第 1 步：只有 /upload/ 下的受保护预览壳才去查后台全量账本（含 draft）。
 // 前台首页 / 条目页不带这个路径 → 仍只拉公开的 /api/modules，访客看到的内容一字不变。
 const ADMIN = location.pathname.startsWith('/upload/');
 const API = ADMIN ? '/api/upload/admin/modules' : '/api/modules';
 
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  })[c]);
-}
-
-function encodeRelative(name) {
-  return String(name).split('/').map(encodeURIComponent).join('/');
-}
+// D-08：escapeHtml / encodeRelative 由 shared/web-utils.js 唯一出处提供，函数体逐字不变。
 
 function coverUrl(mod) {
   if (!mod.cover) return '';

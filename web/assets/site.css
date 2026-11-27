@@ -127,7 +127,7 @@ body[data-page="module"] #app { max-width: 760px; margin-right: auto; }
 }
 
 /* 预览页 */
-.mindmap-page main { max-width: none; padding: 0; }
+/* D-01：删掉 .mindmap-page main 真死规则（两个导图壳都没有 <main>，Chromium 实测 0 命中）。 */
 /* W3 ④：导图页主标题靠画面左侧对齐，不再随 1080 容器居中 */
 .mindmap-page .site-header__inner { max-width: none; margin: 0; }
 /* W3 ⑥：返回按钮与标题同一行，靠右不抢标题 */

@@ -13,23 +13,14 @@ import {
   deleteConfirmMessage,
   matchesDeleteConfirm,
 } from '../../shared/admin.js';
+import { escapeHtml, fetchJSON } from '../../shared/web-utils.js';
 
 const app = document.getElementById('adminApp');
 let rows = [];
 let storage = null;
 let notice = null;
 
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  })[c]);
-}
-
-async function fetchJSON(url) {
-  const res = await fetch(url, { cache: 'no-store' });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
-}
+// D-08：escapeHtml / fetchJSON 由 shared/web-utils.js 唯一出处提供，函数体逐字不变。
 
 function formatBytes(n) {
   if (!Number.isFinite(n) || n < 0) return '—';

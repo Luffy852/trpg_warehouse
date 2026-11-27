@@ -1,7 +1,7 @@
 -- trpg-warehouse · 索引唯一真值：一条目一行，表单字段写入 D1。
 -- 主控台 HTML 不是索引源；不另养 modules.json 或包内第二份清单（原则 6）。
 -- total_bytes：该条目实际占用 R2 的字节数（由 finalize 用 head().size 累加）。
---   成本闸门用它做 8GB 累计容量锁，替代外部 Cron 熔断脚本；draft 也计入。
+--   成本闸门用它做 5GB 累计容量锁（本项目自限额），替代外部 Cron 熔断脚本；draft 也计入。
 CREATE TABLE IF NOT EXISTS modules (
   slug          TEXT PRIMARY KEY,
   title         TEXT NOT NULL,

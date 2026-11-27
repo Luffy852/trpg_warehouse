@@ -14,6 +14,7 @@ import {
 } from '../../shared/paths.js';
 import { extractReferences, buildAvailableSet, findMissingDeps } from '../../shared/deps.js';
 import { COST_GUARD_DEFAULTS, validateSizes } from '../../shared/cost.js';
+import { escapeHtml, fetchJSON } from '../../shared/web-utils.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -45,11 +46,7 @@ $('clearCoverBtn').addEventListener('click', () => {
   setCoverFile(null);
 });
 
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  })[c]);
-}
+// D-08：escapeHtml / fetchJSON 由 shared/web-utils.js 唯一出处提供，函数体逐字不变。
 
 // ①②区可能后选 / 改选，所以每次都按「当前」两个单文件重算，不把剔除结果写死在 setTree。
 function currentSingleNames() {
@@ -244,12 +241,6 @@ async function precheck(meta) {
   const plan = buildUploadPlan(meta.slug || '_', meta.consoleFile, meta.mindmapFile, rels);
   errors.push(...validateSizes({ sizes, plan, guards: COST_GUARD_DEFAULTS }).errors);
   return { errors, refs, rels, sizes, skipped, coverRel, effective: allTree };
-}
-
-async function fetchJSON(url) {
-  const res = await fetch(url, { cache: 'no-store' });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
 }
 
 async function postJSON(url, body) {

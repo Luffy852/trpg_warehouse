@@ -24,7 +24,9 @@ import {
   isUnsafeRelativePath,
   skipSingleFileDuplicates,
   mergeCoverFile,
+  encodeKeyPath,
 } from '../shared/paths.js';
+import { escapeHtml, encodeRelative } from '../shared/web-utils.js';
 import { extractReferences, buildAvailableSet, findMissingDeps } from '../shared/deps.js';
 import {
   COST_GUARD_DEFAULTS,
@@ -603,18 +605,30 @@ check('W2-c ①：公开列表仍只返 published；管理台列表查全量且�
 });
 
 check('W2-c ①：上架写口只改 status，draft→published + 写后读回，不动 R2 / 预留量 / 容量账', () => {
-  const fn = adminWorker.slice(
-    adminWorker.indexOf('async function handleAdminPublish'),
-    adminWorker.indexOf('async function handleAdminUnpublish'),
+  // D-06：两条写口已收口成「配置 + 共用实现」，断言改查真实配置与共用实现，不再假设函数体位置
+  const cfg = adminWorker.slice(
+    adminWorker.indexOf('const PUBLISH_TRANSITION'),
+    adminWorker.indexOf('const UNPUBLISH_TRANSITION'),
   );
-  assert.ok(fn.includes('canPublish'), '迁移判定走 shared 唯一口径');
-  assert.ok(fn.includes("status = 'published'") && fn.includes("AND status = 'draft'"), '只翻 draft，防重复点');
-  assert.ok(fn.includes('SELECT status FROM modules WHERE slug = ?'), '写后读回断言不能省');
-  assert.ok(fn.includes('INDEX_VERIFY_FAILED'));
-  assert.ok(fn.includes('isWritesEnabled(env)'), '写口受一键熔断管住');
+  const shared = adminWorker.slice(
+    adminWorker.indexOf('async function transitionStatus'),
+    adminWorker.indexOf('async function handleAdminPublish'),
+  );
+  const both = cfg + shared;
+  assert.ok(cfg.includes('canPublish'), '迁移判定走 shared 唯一口径');
+  assert.ok(cfg.includes("status = 'published'") && cfg.includes("AND status = 'draft'"), '只翻 draft，防重复点');
+  assert.ok(shared.includes('SELECT status FROM modules WHERE slug = ?'), '写后读回断言不能省');
+  assert.ok(shared.includes('INDEX_VERIFY_FAILED'));
+  assert.ok(shared.includes('isWritesEnabled(env)'), '写口受一键熔断管住');
   for (const forbidden of ['ASSETS_BUCKET', 'upload_locks', 'total_bytes', 'head(', '.delete(']) {
-    assert.ok(!fn.includes(forbidden), `第 1 步不该碰 ${forbidden}`);
+    assert.ok(!both.includes(forbidden), `第 1 步不该碰 ${forbidden}`);
   }
+  assert.ok(adminWorker.includes('return await handleAdminPublish(request, env)'), '路由仍 await 上架写口');
+  // D-03 真实变异：把「读状态 + 写后读回」两处同语句一起回退，断言应红
+  // （replaceAll 而非 replace：共用实现里这条 SQL 出现 2 次，只改一处会假绿）
+  const broken = shared.replaceAll('SELECT status FROM modules WHERE slug = ?', 'SELECT 1');
+  assert.notEqual(broken, shared, '变异必须真的改到生产源码');
+  assert.ok(!broken.includes('SELECT status FROM modules WHERE slug = ?'), '回退后应让断言变红');
 });
 
 check('W2-c ①：前台访客行为一字不变——只有 /upload/ 预览壳才查后台账本', () => {
@@ -692,6 +706,20 @@ check('W2-c ①：草稿上传成功回执明确「没上架 + 去管理台」',
 
 check('W2-c ①：打包脚本重出 admin.js；4 个 vendor 产物都随仓库可交付', () => {
   assert.ok(buildScript.includes("'web/assets/admin-app.js', 'web/vendor/admin.js'"));
+  // D-08：四个前端入口复用同一份 web-utils，不再各写一份工具函数
+  for (const [name, src] of [
+    ['app.js', siteApp], ['mindmap-app.js', mmApp],
+    ['admin-app.js', adminAppSrc], ['upload-app.js', uploadAppSrc],
+  ]) {
+    assert.ok(src.includes("from '../../shared/web-utils.js'"), `${name} 应复用共用工具`);
+    assert.ok(!/function escapeHtml\(/.test(src), `${name} 不应再自带 escapeHtml 实现`);
+    assert.ok(!/function fetchJSON\(/.test(src), `${name} 不应再自带 fetchJSON 实现`);
+  }
+  assert.equal(
+    encodeRelative('资产/地图 01.png'), encodeKeyPath('资产/地图 01.png'),
+    '前端相对路径编码与 R2 key 编码同源',
+  );
+  assert.equal(escapeHtml('<a & "b">'), '&lt;a &amp; &quot;b&quot;&gt;', '共用转义逐字不变');
   for (const name of ['site.js', 'mindmap.js', 'upload.js', 'admin.js']) {
     assert.ok(readFileSync(join(ROOT, 'web/vendor', name), 'utf8').length > 0, `${name} 不应为空`);
   }
@@ -733,19 +761,28 @@ check('W2-c ① 先红后绿：把「按路径切数据源」回退成一律公�
 
 // ---------- W2-c 第 2 步 · 下架（可逆） + 预览/条目页新标签 ----------
 check('W2-c ②：下架写口只改 status，published→draft + 写后读回，不动 R2 / 预留量 / 容量账', () => {
-  const fn = adminWorker.slice(
-    adminWorker.indexOf('async function handleAdminUnpublish'),
-    adminWorker.indexOf('interface AdminBucketObject'),
+  const cfg = adminWorker.slice(
+    adminWorker.indexOf('const UNPUBLISH_TRANSITION'),
+    adminWorker.indexOf('async function transitionStatus'),
   );
-  assert.ok(fn.includes('canUnpublish'), '迁移判定走 shared 唯一口径');
-  assert.ok(fn.includes("status = 'draft'") && fn.includes("AND status = 'published'"), '只翻 published，防重复点');
-  assert.ok(fn.includes('SELECT status FROM modules WHERE slug = ?'), '写后读回断言不能省');
-  assert.ok(fn.includes('INDEX_VERIFY_FAILED'));
-  assert.ok(fn.includes('isWritesEnabled(env)'), '写口受一键熔断管住');
-  assert.ok(fn.includes("status: 'draft'") && fn.includes('verified: true'));
+  const shared = adminWorker.slice(
+    adminWorker.indexOf('async function transitionStatus'),
+    adminWorker.indexOf('async function handleAdminPublish'),
+  );
+  const both = cfg + shared;
+  assert.ok(cfg.includes('canUnpublish'), '迁移判定走 shared 唯一口径');
+  assert.ok(cfg.includes("status = 'draft'") && cfg.includes("AND status = 'published'"), '只翻 published，防重复点');
+  assert.ok(shared.includes('SELECT status FROM modules WHERE slug = ?'), '写后读回断言不能省');
+  assert.ok(shared.includes('INDEX_VERIFY_FAILED'));
+  assert.ok(shared.includes('isWritesEnabled(env)'), '写口受一键熔断管住');
+  assert.ok(
+    cfg.includes("to: 'draft'") && shared.includes('verified: true') && shared.includes('status: t.to'),
+    '回执状态来自迁移配置，不写死',
+  );
   for (const forbidden of ['ASSETS_BUCKET', 'upload_locks', 'total_bytes', 'head(', '.delete(']) {
-    assert.ok(!fn.includes(forbidden), `下架不该碰 ${forbidden}`);
+    assert.ok(!both.includes(forbidden), `下架不该碰 ${forbidden}`);
   }
+  assert.ok(adminWorker.includes('return await handleAdminUnpublish(request, env)'), '路由仍 await 下架写口');
 });
 
 check('W2-c ②：下架与上架互斥，脏状态一律拒，不会误写', () => {
@@ -754,6 +791,17 @@ check('W2-c ②：下架与上架互斥，脏状态一律拒，不会误写', ()
   assert.equal(canPublish('draft'), true);
   assert.equal(canPublish('published'), false);
   assert.equal(canPublish('x') || canUnpublish('x'), false);
+  // D-06 等价性矩阵：两条迁移的允许 / 拒绝态与抽取前一一对应
+  for (const [op, status, expected] of [
+    ['publish', 'draft', true], ['publish', 'published', false],
+    ['unpublish', 'published', true], ['unpublish', 'draft', false],
+  ]) {
+    assert.equal(op === 'publish' ? canPublish(status) : canUnpublish(status), expected, `${op}@${status}`);
+  }
+  assert.ok(
+    adminWorker.includes('PUBLISH_TRANSITION') && adminWorker.includes('UNPUBLISH_TRANSITION'),
+    '两条写口共用同一份迁移实现',
+  );
 });
 
 check('W2-c ②：前端下架按钮 → 确认 → 写口 → 拉公开列表断言「卡片 -1」', () => {
@@ -812,7 +860,7 @@ check('W2-c ③：删除写口手打 slug 权威校验，绕过前端直接打�
 });
 
 check('W2-c ③：删除＝先清 R2 文件、全部成功后才删资料卡；中途失败保留资料卡可重试', () => {
-  assert.ok(deleteFn.includes('listAdminBucketObjects(env, `modules/${slug}/`)'), '按 slug 前缀列举');
+  assert.ok(deleteFn.includes('listAdminBucketObjects(env, `${MODULE_KEY_PREFIX}${slug}/`)'), '按 slug 前缀列举');
   assert.ok(deleteFn.includes('ASSETS_BUCKET.delete(obj.key)'), '逐个删对象');
   assert.ok(deleteFn.includes('PARTIAL_DELETE') && deleteFn.includes('remaining'), '部分失败要有可重试回执');
   const idxDeleteObjects = deleteFn.indexOf('ASSETS_BUCKET.delete(obj.key)');
@@ -953,7 +1001,7 @@ check('W2-c ③：不自动跑写成断言——列举只在一个 helper 里，
     3,
     '定义 1 次 + 删除 / 校准各调用 1 次，不得扩散到别处',
   );
-  assert.ok(deleteFn.includes('listAdminBucketObjects(env, `modules/${slug}/`)'), '删除也只翻该条目前缀');
+  assert.ok(deleteFn.includes('listAdminBucketObjects(env, `${MODULE_KEY_PREFIX}${slug}/`)'), '删除也只翻该条目前缀');
   assert.ok(calibrateFn.includes('listAdminBucketObjects(env, MODULE_KEY_PREFIX)'), '校准只翻 modules/ 前缀');
   const listFn = adminWorker.slice(
     adminWorker.indexOf('async function handleAdminModules'),
@@ -967,13 +1015,26 @@ check('W2-c ③：不自动跑写成断言——列举只在一个 helper 里，
 
 check('W2-c ③ 先红后绿：回退「预览页三字」/「手打确认」/「孤儿值兜账」，断言真的会红；还原后绿', () => {
   assert.notEqual('预览'.length, adminRowActions('published').previewLabel.length, '旧文案应让断言变红');
-  const legacyConfirm = (slug, typed) => typed !== undefined;
-  assert.equal(legacyConfirm('abc', 'abd'), true, '旧确认形同虚设应让断言变红');
-  assert.equal(matchesDeleteConfirm('abc', 'abd'), false, '还原后应变绿');
+  // D-03 真实变异：把生产源码里的手打确认调用换成旧式恒放行，断言应红
+  const legacyDeleteSrc = adminAppSrc.replace(
+    'matchesDeleteConfirm(slug, typed)',
+    'typed !== undefined',
+  );
+  assert.notEqual(legacyDeleteSrc, adminAppSrc, '变异必须真的改到管理台源码');
+  assert.ok(!legacyDeleteSrc.includes('matchesDeleteConfirm(slug, typed)'), '回退后应让断言变红');
+  assert.ok(adminAppSrc.includes('matchesDeleteConfirm(slug, typed)'), '还原后应变绿');
+  assert.equal(matchesDeleteConfirm('abc', 'abd'), false, '生产口径仍然拒绝打错的 slug');
   // R9 用户纠正的旧做法：不删对象，只把 999 记回预留 → 空间没压缩、账被抬高迁就垃圾
-  const legacyOrphanHandling = { unindexedBytes: 999, insertIntoLocks: true };
-  assert.ok(legacyOrphanHandling.unindexedBytes > 0, '旧实现确实会登记孤儿值，应让断言变红');
-  assert.ok(!calibrateFn.includes('unindexedBytes') && !calibrateFn.includes('INSERT INTO upload_locks'), '新实现不应留任何孤儿值');
+  const legacyCalibrateSrc = calibrateFn.replace(
+    'ASSETS_BUCKET.delete(obj.key)',
+    'void 0 /* 不删，只登记孤儿值 */',
+  );
+  assert.notEqual(legacyCalibrateSrc, calibrateFn, '变异必须真的改到校准写口源码');
+  assert.ok(!legacyCalibrateSrc.includes('ASSETS_BUCKET.delete(obj.key)'), '回退后应让断言变红');
+  assert.ok(
+    !calibrateFn.includes('unindexedBytes') && !calibrateFn.includes('INSERT INTO upload_locks'),
+    '新实现不应留任何孤儿值',
+  );
   assert.ok(calibrateFn.includes('ASSETS_BUCKET.delete(obj.key)'), '还原后应变绿：真删垃圾');
   assert.equal((adminWorker.match(/\.list\(/g) ?? []).length, 1, '列举点数量白名单还原后应变绿');
   assert.equal(adminRowActions('draft').previewLabel, '预览页');
@@ -991,6 +1052,15 @@ check('R10 共用桶：容量闸门 = 5GB，wrangler.toml 与代码缺省一致�
   const doc = readFileSync(join(ROOT, 'docs/部署指引_纯点击.md'), 'utf8');
   assert.ok(!/8\s*GB|8GB/.test(doc), '部署指引不能残留 8GB');
   assert.ok(doc.includes('5 GB') && doc.includes('共用'));
+  // D-02：文档口径也要与 5GB 一致（README 第 6 行「8GB → 5GB」是历史变更说明，不算残留）
+  const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
+  const limits = readme.slice(readme.indexOf('## 7. 已知限制'), readme.indexOf('## 8. 边界与版权'));
+  assert.ok(limits.length > 0, 'README 已知限制段应存在');
+  assert.ok(!/8\s*GB|8GB/i.test(limits), 'README 已知限制段不能残留 8GB');
+  assert.ok(/5\s?GB/i.test(limits), 'README 已知限制段应写现行 5GB 闸门');
+  const migration = readFileSync(join(ROOT, 'migrations/0001_init.sql'), 'utf8');
+  assert.ok(!/8\s*GB|8GB/i.test(migration), 'migration 注释不能残留 8GB');
+  assert.ok(/5\s?GB/i.test(migration), 'migration 注释应与 5GB 闸门一致');
 });
 
 check('R10：成本默认值改 5GB 后，上传端 vendor 必须连着重出（防本地预检仍按 8GB 放行）', () => {
@@ -1004,22 +1074,36 @@ check('R10：成本默认值改 5GB 后，上传端 vendor 必须连着重出（
 
 check('R10 口径统一：账本 / 校准规模 / 容量闸门算的都是 modules/ 这部分', () => {
   const usageQuery = adminWorker.slice(
-    adminWorker.indexOf('成本闸门 ②'),
-    adminWorker.indexOf('// 先记预留'),
+    adminWorker.indexOf('async function readCapacityUsage'),
+    adminWorker.indexOf('async function handlePrepare'),
   );
   assert.ok(usageQuery.includes('SUM(total_bytes)') && usageQuery.includes('FROM modules'), '账本只按 D1 modules 聚合');
   assert.ok(!usageQuery.includes('ASSETS_BUCKET') && !usageQuery.includes('.list('), '写口核算不翻 R2');
+  assert.equal(
+    (adminWorker.match(/readCapacityUsage\(/g) ?? []).length,
+    3,
+    'D-07：定义 1 次 + prepare / finalize 各调用 1 次，两条写口同输入同输出',
+  );
   assert.ok(calibrateFn.includes('MODULE_KEY_PREFIX'), '校准规模只算 modules/ 前缀');
   assert.equal(MODULE_KEY_PREFIX, 'modules/');
 });
 
 check('R10 先红后绿：回退「翻全桶」「删前缀外对象」「8GB 闸门」，断言真的会红；还原后绿', () => {
-  assert.ok(
-    'listAdminBucketObjects(env)'.length < 'listAdminBucketObjects(env, MODULE_KEY_PREFIX)'.length,
-    '旧的全桶列举应让断言变红',
+  // D-03 真实变异：把校准列举的前缀去掉，断言应红（原来只比较两个字面量的长度）
+  const legacyListSrc = adminWorker.replace(
+    'listAdminBucketObjects(env, MODULE_KEY_PREFIX)',
+    'listAdminBucketObjects(env)',
   );
-  const legacyOutsideIsOrphan = true;
-  assert.notEqual(legacyOutsideIsOrphan, isOrphanR2Key('other-project/data.bin', new Set()), '旧判定会误删别的项目');
+  assert.notEqual(legacyListSrc, adminWorker, '变异必须真的改到 Worker 源码');
+  assert.ok(!legacyListSrc.includes('listAdminBucketObjects(env, MODULE_KEY_PREFIX)'), '回退全桶列举应让断言变红');
+  assert.ok(calibrateFn.includes('listAdminBucketObjects(env, MODULE_KEY_PREFIX)'), '还原后应变绿');
+  // 前缀外对象一律不碰：查生产行为 + 查唯一常量，不再拿字面量自证
+  assert.equal(isOrphanR2Key('other-project/data.bin', new Set()), false, '前缀外不能被判成孤儿');
+  const adminSrc = readFileSync(join(ROOT, 'shared/admin.js'), 'utf8');
+  assert.ok(
+    adminSrc.includes('if (!k.startsWith(MODULE_KEY_PREFIX)) return false;'),
+    '前缀外短路来自唯一常量',
+  );
   assert.notEqual(8 * GB_UNIT, COST_GUARD_DEFAULTS.bucketCapBytes, '旧 8GB 闸门应让断言变红');
   assert.equal(readCostGuards({}).bucketCapBytes, 5 * GB_UNIT, '还原后应变绿');
   assert.ok(calibrateFn.includes('MODULE_KEY_PREFIX'));
@@ -1045,7 +1129,13 @@ check('W3 ⑬：首页卡片只留「封面 + 模组名」，规则行与简介�
 check('W3 ⑬：分区标题计数全部去掉（含 COC / 其他大区），只留体量类型', () => {
   assert.ok(!siteApp.includes('· ${group.length}'), 'DND 下 kind 标题不再带 · N');
   assert.ok(!siteApp.includes('· ${dnd.length}'), 'DND 大区标题不带计数');
-  assert.ok(w3css.includes('.section h3') && w3css.includes('font-weight: 700'), '体量类型加粗提亮');
+  // D-03：原来靠注释里的 `.section h3` 字面量命中，删掉注释就假绿。
+  // 改成查真实规则并做内存变异：把 > 去掉，断言应红。
+  const sectRule = (s) => /\.section\s*>\s*h3\s*\{[^}]*font-weight:\s*700/.test(s);
+  assert.ok(sectRule(w3css), '分区标题真实规则应加粗提亮');
+  const brokenSect = w3css.replace('.section > h3 {', '.section h3 {');
+  assert.notEqual(brokenSect, w3css, '变异必须真的改到 site.css');
+  assert.equal(sectRule(brokenSect), false, '回退成后代选择器应让断言变红');
 });
 
 check('W3 ⑬ 方案甲：桌面一行 5 列，3:4 竖版封面轻微裁切填满', () => {
@@ -1101,7 +1191,16 @@ check('W3 ③：导图一打开就适配屏幕，页面锁一屏、不再长滚�
 });
 
 check('W3 ②：左上布局按钮组 / 右下全屏·回中·缩放功能条提对比度且不被遮挡', () => {
-  assert.ok(w3css.includes('左上＝布局按钮组，右下＝全屏 / 回中 / 放大缩小功能条'), '按用户新分类登记，别把两条功能认反');
+  // D-03：原来查的是注释文字；改成查两条真实 CSS 规则，并验证变异会红。
+  const ltRule = (s) => /\.mind-elixir-toolbar\.lt\s*\{[^}]*top:\s*16px[^}]*left:\s*16px/.test(s);
+  const rbRule = (s) => /\.mind-elixir-toolbar\.rb\s*\{[^}]*right:\s*16px[^}]*bottom:\s*16px/.test(s);
+  assert.ok(ltRule(w3css) && rbRule(w3css), '左上 / 右下两条功能条按新分类各自定位');
+  const brokenRb = w3css.replace(
+    '.mind-elixir-toolbar.rb { right: 16px; bottom: 16px; }',
+    '.mind-elixir-toolbar.rb { right: 0; bottom: 0; }',
+  );
+  assert.notEqual(brokenRb, w3css, '变异必须真的改到 site.css');
+  assert.equal(rbRule(brokenRb), false, '右下功能条被推回角落应让断言变红');
   assert.ok(w3css.includes('body.mindmap-page .mind-elixir-toolbar'), '在项目 CSS 覆盖，不改第三方生成物');
   assert.ok(w3css.includes('.mind-elixir-toolbar.lt') && w3css.includes('.mind-elixir-toolbar.rb'), '两组工具条都覆盖到');
   assert.ok(w3css.includes('color: var(--accent-soft) !important'), '白底画布上给足对比度');
@@ -1119,7 +1218,13 @@ check('W3 ⑧：被拒时只显示失败信息，不再留静态「本地预检�
 check('W3 ⑨：other 下拉直接写「other（建议模组名标记）」，枚举值与 D1 字段不动', () => {
   assert.ok(uploadHtml.includes('<option value="other">other（建议模组名标记）</option>'), '只改显示文字');
   assert.ok(uploadHtml.includes('value="other"'), '枚举值仍是 other');
-  assert.ok(uploadAppSrc.includes('system'), '上传逻辑不改');
+  // D-03：原来 includes('system') 是弱断言（随便哪个标识符都能命中）。
+  // 改成查「readForm 仍按原字段读取 system」并做内存变异。
+  const sysProbe = (s) => /\bsystem:\s*\$\('system'\)\.value/.test(s);
+  assert.ok(sysProbe(uploadAppSrc), 'readForm 仍按原字段读取 system');
+  const brokenSys = uploadAppSrc.replace("system: $('system').value", "system: 'dnd'");
+  assert.notEqual(brokenSys, uploadAppSrc, '变异必须真的改到上传端源码');
+  assert.equal(sysProbe(brokenSys), false, '写死枚举值应让断言变红');
 });
 
 check('W3 技术文案复验：前台 footer / 入口小字改成人话，上传页与管理台一行不动', () => {
@@ -1186,18 +1291,83 @@ check('W3：改过的前端源码必须连带重出 vendor（防线上与源码�
 });
 
 check('W3 先红后绿：回退 5 列 / 3:4 / 新标签 / 返回按钮 / 两组功能条 / ⑧⑨，断言真的会红；还原后绿', () => {
-  assert.notEqual('repeat(auto-fill, minmax(240px, 1fr))', 'repeat(5, minmax(0, 1fr))', '旧自动列宽会红');
-  assert.notEqual('height: 132px', 'aspect-ratio: 3 / 4', '旧横条封面会红');
-  assert.ok(!'<a class="entry" href="${escapeHtml(mindmapUrl)}">'.includes('target="_blank"'), '旧导图入口会红');
-  assert.ok(!'<h1>思维导图预览</h1>'.includes('id="mapTitle"'), '旧标题会红');
-  assert.ok(!'other</option>'.includes('建议模组名标记'), '旧 other 文案会红');
-  assert.ok('<div class="brand"><h1>TRPG 模组库</h1><span>点击浏览</span></div>'.includes('<span>点击浏览</span>'), '旧顶部说明会红');
-  assert.ok('padding: 12px 12px 14px' !== 'height: 38px', 'R5 旧大留白会红');
-  assert.ok('min-height: 40px' !== 'height: 38px; padding: 0 10px; overflow: hidden', 'R6 只给下限会红');
-  assert.ok('padding: 5px 10px 7px' !== 'height: 38px', 'R7 贴顶无留白会红（用户不要紧贴字）');
-  assert.notEqual('.section h3 {', '.section > h3 {', 'R10：旧后代选择器会让垂直居中失效，回退应红');
+  // D-03：原先把两个字面量互相比一比，恒真、且与生产源码无关（摆设断言）。
+  // 现在每条都绑定生产源码：先证实现行命中 → 对源码做内存变异证明会红 →
+  // 用「变异确实改到了源码」挡住 replace 没匹配上造成的假绿。
+  const mutations = [
+    {
+      label: '桌面 5 列',
+      src: w3css,
+      probe: (s) => s.includes('repeat(5, minmax(0, 1fr))'),
+      mutate: (s) => s.replace('repeat(5, minmax(0, 1fr))', 'repeat(auto-fill, minmax(240px, 1fr))'),
+    },
+    {
+      label: '3:4 竖版封面',
+      src: w3css,
+      probe: (s) => s.includes('aspect-ratio: 3 / 4'),
+      mutate: (s) => s.replace('aspect-ratio: 3 / 4', 'height: 132px'),
+    },
+    {
+      label: '导图入口新标签',
+      src: siteApp,
+      probe: (s) => s.includes('href="${escapeHtml(mindmapUrl)}" target="_blank" rel="noopener"'),
+      mutate: (s) => s.replace('href="${escapeHtml(mindmapUrl)}" target="_blank" rel="noopener"', 'href="${escapeHtml(mindmapUrl)}"'),
+    },
+    {
+      label: '导图主标题元素',
+      src: w3MmHtml,
+      probe: (s) => s.includes('id="mapTitle"'),
+      mutate: (s) => s.replace('id="mapTitle"', 'id="oldTitle"'),
+    },
+    {
+      label: 'other 下拉文案',
+      src: uploadHtml,
+      probe: (s) => s.includes('other（建议模组名标记）'),
+      mutate: (s) => s.replace('other（建议模组名标记）', 'other'),
+    },
+    {
+      label: '首页顶部「点击浏览」',
+      src: w3HomeHtml,
+      probe: (s) => !s.includes('<span>点击浏览</span>'),
+      mutate: (s) => s.replace('<h1>TRPG 模组库</h1>', '<h1>TRPG 模组库</h1><span>点击浏览</span>'),
+    },
+    {
+      label: '38px 硬封顶',
+      src: w3css,
+      probe: (s) => /\.card__body\s*\{[^}]*height:\s*38px[^}]*overflow:\s*hidden/.test(s),
+      mutate: (s) => s.replace('height: 38px; padding: 0 10px; overflow: hidden;', 'min-height: 40px; padding: 8px 12px;'),
+    },
+    {
+      label: '分区标题直接子级选择器',
+      src: w3css,
+      probe: (s) => s.includes('.section > h3 {') && !s.includes('.section h3 {'),
+      mutate: (s) => s.replace('.section > h3 {', '.section h3 {'),
+    },
+    {
+      label: '导图标题动态写入 + 返回按钮',
+      src: mmApp,
+      probe: (s) => s.includes('思维导图 · ${mod.title}') && s.includes('/module.html?slug='),
+      mutate: (s) => s.replace('思维导图 · ${mod.title}', '思维导图预览'),
+    },
+    {
+      label: '导图右下功能条位置',
+      src: w3css,
+      probe: (s) => s.includes('.mind-elixir-toolbar.rb { right: 16px; bottom: 16px; }'),
+      mutate: (s) => s.replace('.mind-elixir-toolbar.rb { right: 16px; bottom: 16px; }', '.mind-elixir-toolbar.rb { right: 0; bottom: 0; }'),
+    },
+  ];
+  for (const m of mutations) {
+    assert.equal(m.probe(m.src), true, `${m.label}：现行实现应命中`);
+    const mutated = m.mutate(m.src);
+    assert.notEqual(mutated, m.src, `${m.label}：变异必须真的改到生产源码`);
+    assert.equal(m.probe(mutated), false, `${m.label}：回退后应让断言变红`);
+  }
+  // 还原后绿（生产源码逐项复核）
   assert.ok(w3css.includes('repeat(5, minmax(0, 1fr))') && w3css.includes('aspect-ratio: 3 / 4'), '还原后应变绿');
-  assert.ok(w3css.includes('align-items: start') && w3css.includes('height: 38px') && !w3css.includes('min-height: 40px'), 'R9 还原后应变绿');
+  assert.ok(
+    w3css.includes('align-items: start') && w3css.includes('height: 38px') && !w3css.includes('min-height: 40px'),
+    'R9 还原后应变绿',
+  );
   assert.ok(w3css.includes('.section > h3 {') && !w3css.includes('.section h3 {'), 'R10 还原后应变绿');
   assert.ok(siteApp.includes('target="_blank" rel="noopener"') && mmApp.includes('mind.scaleFit?.()'));
 });

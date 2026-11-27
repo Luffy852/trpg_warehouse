@@ -15,9 +15,13 @@ import {
   storageSnapshot,
   slugFromR2Key,
   isOrphanR2Key,
-  MODULE_KEY_PREFIX,
 } from '../../shared/admin.js';
-import { isUnsafeRelativePath, findDuplicateNames, buildUploadPlan } from '../../shared/paths.js';
+import {
+  isUnsafeRelativePath,
+  findDuplicateNames,
+  buildUploadPlan,
+  MODULE_KEY_PREFIX,
+} from '../../shared/paths.js';
 import { extractReferences, buildAvailableSet, findMissingDeps } from '../../shared/deps.js';
 import {
   readCostGuards,
@@ -109,15 +113,10 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-// 公开只读列表：draft 不进返回；返回体不含资源包清单（V-04 / V-09）。
-async function handleModules(env: Env): Promise<Response> {
-  const { results } = await env.DB.prepare(
-    `SELECT slug, title, system, kind, summary, cover, status, console_file, mindmap_file, created_at
-     FROM modules WHERE status = 'published'
-     ORDER BY created_at DESC, slug ASC`,
-  ).all<ModuleRow>();
-  const base = env.R2_PUBLIC_BASE_URL.replace(/\/+$/, '');
-  const modules = (results ?? []).map((row) => ({
+// 列表接口的 row→DTO 映射唯一出处（D-05）：公开列表与管理台列表字段完全一致，
+// 原先各写一份，改一处漏一处是必然事件（原则 4）。baseUrl 现场推导、不落库（原则 6）。
+function toModuleDto(row: ModuleRow, base: string) {
+  return {
     slug: row.slug,
     title: row.title,
     system: row.system,
@@ -128,9 +127,20 @@ async function handleModules(env: Env): Promise<Response> {
     consoleFile: row.console_file,
     mindmapFile: row.mindmap_file,
     // 资源基址由 slug 推导，不另存一份（原则 6）
-    baseUrl: `${base}/modules/${encodeURIComponent(row.slug)}/`,
+    baseUrl: `${base}/${MODULE_KEY_PREFIX}${encodeURIComponent(row.slug)}/`,
     createdAt: row.created_at,
-  }));
+  };
+}
+
+// 公开只读列表：draft 不进返回；返回体不含资源包清单（V-04 / V-09）。
+async function handleModules(env: Env): Promise<Response> {
+  const { results } = await env.DB.prepare(
+    `SELECT slug, title, system, kind, summary, cover, status, console_file, mindmap_file, created_at
+     FROM modules WHERE status = 'published'
+     ORDER BY created_at DESC, slug ASC`,
+  ).all<ModuleRow>();
+  const base = env.R2_PUBLIC_BASE_URL.replace(/\/+$/, '');
+  const modules = (results ?? []).map((row) => toModuleDto(row, base));
   return json({ modules });
 }
 
@@ -152,30 +162,52 @@ async function handleAdminModules(env: Env): Promise<Response> {
     snapshotRow = null;
   }
   const base = env.R2_PUBLIC_BASE_URL.replace(/\/+$/, '');
-  const modules = sortAdminRows(results ?? []).map((row) => ({
-    slug: row.slug,
-    title: row.title,
-    system: row.system,
-    kind: row.kind,
-    summary: row.summary,
-    cover: row.cover,
-    status: row.status,
-    consoleFile: row.console_file,
-    mindmapFile: row.mindmap_file,
-    // 资源基址由 slug 推导，不另存一份（原则 6）；草稿预览页据此直取 R2 原文件
-    baseUrl: `${base}/modules/${encodeURIComponent(row.slug)}/`,
-    createdAt: row.created_at,
-  }));
+  const modules = sortAdminRows(results ?? []).map((row) => toModuleDto(row, base));
   return json({ modules, storage: storageSnapshot(snapshotRow) });
 }
 
-// W2-c 第 1 步：单字段改 status（draft → published），不重传文件、不动 R2、不动容量账。
-// 与 finalize 一致：写后读回断言，回执成功 ≠ 状态真的翻了。
-async function handleAdminPublish(request: Request, env: Env): Promise<Response> {
-  // 写口一律受一键熔断管住（不涉及 R2，但保持「写口统一」口径）
+// D-06：上架 / 下架是同一套「状态迁移」，原先复制粘贴两份（相似度 0.936）。
+// 抽成「配置 + 共用实现」：两条写口的 SQL、错误码、文案逐字保留，外部行为不变。
+interface StatusTransition {
+  action: string;
+  can: (status: string) => boolean;
+  to: string;
+  updateSql: string;
+  conflictCode: string;
+  conflictMessage: string;
+  verifyError: string;
+}
+
+const PUBLISH_TRANSITION: StatusTransition = {
+  action: '上架',
+  can: canPublish,
+  to: 'published',
+  updateSql: "UPDATE modules SET status = 'published', updated_at = datetime('now') WHERE slug = ? AND status = 'draft'",
+  conflictCode: 'ALREADY_PUBLISHED',
+  conflictMessage: '只有草稿可以上架；该条目已是已发布状态',
+  verifyError: '状态写入校验失败，未确认上架',
+};
+
+const UNPUBLISH_TRANSITION: StatusTransition = {
+  action: '下架',
+  can: canUnpublish,
+  to: 'draft',
+  updateSql: "UPDATE modules SET status = 'draft', updated_at = datetime('now') WHERE slug = ? AND status = 'published'",
+  conflictCode: 'ALREADY_DRAFT',
+  conflictMessage: '只有已发布条目可以下架；该条目已是草稿',
+  verifyError: '状态写入校验失败，未确认下架',
+};
+
+// 写口一律受一键熔断管住（不涉及 R2，但保持「写口统一」口径）；
+// 写后读回断言，回执成功 ≠ 状态真的翻了。
+async function transitionStatus(
+  request: Request,
+  env: Env,
+  t: StatusTransition,
+): Promise<Response> {
   if (!isWritesEnabled(env)) {
     return json(
-      { error: '写口已熔断，暂停上架（成本保护）', code: 'WRITES_DISABLED' },
+      { error: `写口已熔断，暂停${t.action}（成本保护）`, code: 'WRITES_DISABLED' },
       503,
     );
   }
@@ -187,82 +219,35 @@ async function handleAdminPublish(request: Request, env: Env): Promise<Response>
     .bind(slug)
     .first<{ status: string }>();
   if (!row) return json({ error: '条目不存在', code: 'NOT_FOUND' }, 404);
-  // 只接受 draft → published：重复点 / 已发布 / 脏状态一律拒，不静默改写
-  if (!canPublish(row.status)) {
-    return json(
-      { error: '只有草稿可以上架；该条目已是已发布状态', code: 'ALREADY_PUBLISHED' },
-      409,
-    );
+  // 只接受配置的单一迁移：重复点 / 已发布 / 脏状态一律拒，不静默改写
+  if (!t.can(row.status)) {
+    return json({ error: t.conflictMessage, code: t.conflictCode }, 409);
   }
 
-  await env.DB.prepare(
-    "UPDATE modules SET status = 'published', updated_at = datetime('now') WHERE slug = ? AND status = 'draft'",
-  )
-    .bind(slug)
-    .run();
+  await env.DB.prepare(t.updateSql).bind(slug).run();
 
   const after = await env.DB.prepare('SELECT status FROM modules WHERE slug = ?')
     .bind(slug)
     .first<{ status: string }>();
-  if (!after || after.status !== 'published') {
-    return json({ error: '状态写入校验失败，未确认上架', code: 'INDEX_VERIFY_FAILED' }, 500);
+  if (!after || after.status !== t.to) {
+    return json({ error: t.verifyError, code: 'INDEX_VERIFY_FAILED' }, 500);
   }
 
   return json({
     ok: true,
     slug,
-    status: 'published',
+    status: t.to,
     previousStatus: row.status,
     verified: true,
   });
 }
 
-// W2-c 第 2 步：下架＝把已发布退回草稿（可逆）。只改 status，文件仍留在 R2、
-// 不重传、不删对象、不动预留量表与累计容量账 —— 账按用户 R4-5 保持只增不减。
-// 与上架对称：写后读回断言，回执成功 ≠ 状态真的翻了。
+async function handleAdminPublish(request: Request, env: Env): Promise<Response> {
+  return await transitionStatus(request, env, PUBLISH_TRANSITION);
+}
+
 async function handleAdminUnpublish(request: Request, env: Env): Promise<Response> {
-  if (!isWritesEnabled(env)) {
-    return json(
-      { error: '写口已熔断，暂停下架（成本保护）', code: 'WRITES_DISABLED' },
-      503,
-    );
-  }
-  const body = (await request.json().catch(() => null)) as { slug?: string } | null;
-  const slug = typeof body?.slug === 'string' ? body.slug : '';
-  if (!slug) return json({ error: '缺少 slug', code: 'BAD_REQUEST' }, 400);
-
-  const row = await env.DB.prepare('SELECT status FROM modules WHERE slug = ?')
-    .bind(slug)
-    .first<{ status: string }>();
-  if (!row) return json({ error: '条目不存在', code: 'NOT_FOUND' }, 404);
-  // 只接受 published → draft：重复点 / 草稿 / 脏状态一律拒，不静默改写
-  if (!canUnpublish(row.status)) {
-    return json(
-      { error: '只有已发布条目可以下架；该条目已是草稿', code: 'ALREADY_DRAFT' },
-      409,
-    );
-  }
-
-  await env.DB.prepare(
-    "UPDATE modules SET status = 'draft', updated_at = datetime('now') WHERE slug = ? AND status = 'published'",
-  )
-    .bind(slug)
-    .run();
-
-  const after = await env.DB.prepare('SELECT status FROM modules WHERE slug = ?')
-    .bind(slug)
-    .first<{ status: string }>();
-  if (!after || after.status !== 'draft') {
-    return json({ error: '状态写入校验失败，未确认下架', code: 'INDEX_VERIFY_FAILED' }, 500);
-  }
-
-  return json({
-    ok: true,
-    slug,
-    status: 'draft',
-    previousStatus: row.status,
-    verified: true,
-  });
+  return await transitionStatus(request, env, UNPUBLISH_TRANSITION);
 }
 
 // ── W2-c 第 3 步 · 人触发的一次性 R2 列举 ──────────────────────────────────
@@ -324,7 +309,7 @@ async function handleAdminDelete(request: Request, env: Env): Promise<Response> 
   if (!row) return json({ error: '条目不存在', code: 'NOT_FOUND' }, 404);
 
   // ① 先把仓库文件清干净：R2 没有目录对象，只能按前缀列举后逐个删。
-  const objects = await listAdminBucketObjects(env, `modules/${slug}/`);
+  const objects = await listAdminBucketObjects(env, `${MODULE_KEY_PREFIX}${slug}/`);
   let deleted = 0;
   const remaining: string[] = [];
   for (const obj of objects) {
@@ -465,6 +450,28 @@ async function handleAdminCalibrate(env: Env): Promise<Response> {
 }
 
 // 上架前权威校验 + 签发预签名 URL。任何一项不过都不写索引。
+
+// D-07：prepare / finalize 的容量聚合 SQL 原先逐字重复，仅 bind 的 slug 来源不同。
+// 抽成唯一出处：两条写口同输入同输出；fail-closed 的错误文案不同，仍留在各自调用处。
+async function readCapacityUsage(
+  env: Env,
+  slug: string,
+): Promise<{ used: number; replacing: number } | null> {
+  const usage = await env.DB.prepare(
+    `SELECT
+       (SELECT COALESCE(SUM(total_bytes), 0) FROM modules) +
+       (SELECT COALESCE(SUM(reserved_bytes), 0) FROM upload_locks) AS used,
+       COALESCE((SELECT total_bytes FROM modules WHERE slug = ?), 0) +
+       COALESCE((SELECT reserved_bytes FROM upload_locks WHERE slug = ?), 0) AS replacing`,
+  )
+    .bind(slug, slug)
+    .first<{ used: number; replacing: number }>();
+  if (!usage || !Number.isSafeInteger(usage.used) || !Number.isSafeInteger(usage.replacing)) {
+    return null;
+  }
+  return usage;
+}
+
 async function handlePrepare(request: Request, env: Env): Promise<Response> {
   // 一键熔断（纯点击：GitHub 网页把 WRITES_ENABLED 改成 "0" → Commit 即生效）。
   // 宁可停止上架，也不在额度不明时继续写 R2。
@@ -562,17 +569,9 @@ async function handlePrepare(request: Request, env: Env): Promise<Response> {
   // 浏览器拿到预签名 URL 后关掉页面 / finalize 失败，R2 里会留下对象但 D1 没有索引，
   // 若不计预留就会少算，容量锁形同虚设。
   // 这条聚合只在写口跑（Access 保护、人触发），不在浏览请求里跑，也不是定时遍历。
-  const usage = await env.DB.prepare(
-    `SELECT
-       (SELECT COALESCE(SUM(total_bytes), 0) FROM modules) +
-       (SELECT COALESCE(SUM(reserved_bytes), 0) FROM upload_locks) AS used,
-       COALESCE((SELECT total_bytes FROM modules WHERE slug = ?), 0) +
-       COALESCE((SELECT reserved_bytes FROM upload_locks WHERE slug = ?), 0) AS replacing`,
-  )
-    .bind(meta.slug, meta.slug)
-    .first<{ used: number; replacing: number }>();
+  const usage = await readCapacityUsage(env, meta.slug);
   // fail-closed：拿不到可信数字就拒，不「算了放行」
-  if (!usage || !Number.isSafeInteger(usage.used) || !Number.isSafeInteger(usage.replacing)) {
+  if (!usage) {
     return json(
       { error: '容量核算不可用，拒绝上架（成本保护）', code: 'USAGE_UNAVAILABLE' },
       503,
@@ -743,16 +742,9 @@ async function handleFinalize(request: Request, env: Env): Promise<Response> {
 
   // 容量锁二次复核：prepare 到 finalize 之间可能有别的条目上架，用真实字节再算一次。
   // 本 slug 的预留量同时出现在 used 和 replacing 里，正好抵消，不会重复计。
-  const usage = await env.DB.prepare(
-    `SELECT
-       (SELECT COALESCE(SUM(total_bytes), 0) FROM modules) +
-       (SELECT COALESCE(SUM(reserved_bytes), 0) FROM upload_locks) AS used,
-       COALESCE((SELECT total_bytes FROM modules WHERE slug = ?), 0) +
-       COALESCE((SELECT reserved_bytes FROM upload_locks WHERE slug = ?), 0) AS replacing`,
-  )
-    .bind(payload.slug, payload.slug)
-    .first<{ used: number; replacing: number }>();
-  if (!usage || !Number.isSafeInteger(usage.used) || !Number.isSafeInteger(usage.replacing)) {
+  const usage = await readCapacityUsage(env, payload.slug);
+  // fail-closed：拿不到可信数字就拒，不「算了放行」
+  if (!usage) {
     return json(
       { error: '容量核算不可用，索引未更新（成本保护）', code: 'USAGE_UNAVAILABLE' },
       503,
@@ -859,7 +851,7 @@ async function handleDownload(url: URL, env: Env): Promise<Response> {
   if (!row) return json({ error: '条目不存在', code: 'NOT_FOUND' }, 404);
 
   const name = which === 'console' ? row.console_file : row.mindmap_file;
-  const object = await env.ASSETS_BUCKET.get(`modules/${slug}/${name}`);
+  const object = await env.ASSETS_BUCKET.get(`${MODULE_KEY_PREFIX}${slug}/${name}`);
   if (!object) return json({ error: '文件不存在', code: 'NOT_FOUND' }, 404);
 
   const headers = new Headers();

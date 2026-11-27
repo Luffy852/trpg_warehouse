@@ -6,6 +6,7 @@ import { unzipSync } from 'fflate';
 import MindElixir from 'mind-elixir';
 import { importXMindFile, convertXmindToMindElixir } from '@mind-elixir/import-xmind';
 import { inspectXmind } from '../../shared/xmind.js';
+import { escapeHtml, encodeRelative } from '../../shared/web-utils.js';
 
 const statusEl = document.getElementById('status');
 const sheetsEl = document.getElementById('sheets');
@@ -19,15 +20,7 @@ const mapEl = document.getElementById('map');
 const ADMIN = location.pathname.startsWith('/upload/');
 const MODULES_API = ADMIN ? '/api/upload/admin/modules' : '/api/modules';
 
-function escapeHtml(value) {
-  return String(value ?? '').replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  })[c]);
-}
-
-function encodeRelative(name) {
-  return String(name).split('/').map(encodeURIComponent).join('/');
-}
+// D-08：escapeHtml / encodeRelative 由 shared/web-utils.js 唯一出处提供，函数体逐字不变。
 
 // 任何失败都给可见提示 + 下载原文件链接，绝不留白屏（原则 2 / P-03）
 function fail(message, detail) {

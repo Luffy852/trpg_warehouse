@@ -4,6 +4,7 @@
 // 对应本窗口 R4 / R5 / R6 / R7 用户拍板：五列纵向列表、按体系 → slug A→Z、slug 只读；
 // 第 1 步亮上架、第 2 步亮下架、第 3 步亮删除；灰按钮不加额外注释（R5-3）。
 import { SYSTEMS, SYSTEM_LABELS, KIND_LABELS, STATUS_LABELS } from './contract.js';
+import { MODULE_KEY_PREFIX } from './paths.js';
 
 /** 第三列「规则及体量」：DND-战役 / COC-模组 / 其他规则-遭遇 */
 export function systemKindLabel(system, kind) {
@@ -95,19 +96,24 @@ export function storageSnapshot(row) {
 }
 
 /**
- * 本项目在 R2 里的命名空间前缀。与 shared/paths.js 的 buildR2Key
- * （`modules/<slug>/<relativePath>`）严格一致，冒烟有断言校验两者不漂移。
+ * 本项目在 R2 里的命名空间前缀：唯一出处在 shared/paths.js（与 buildR2Key 同源）。
+ * 这里保留同名导出，让既有 import / 冒烟断言继续成立，不制造第二份常量（D-04）。
  * 用户 R10：这个 R2 桶可能与另一个项目共用 → 列举 / 删除 / 算规模一律只碰这个前缀。
  */
-export const MODULE_KEY_PREFIX = 'modules/';
+export { MODULE_KEY_PREFIX };
 
 /**
  * 从 R2 key 提取所属 slug。key 格局的唯一出处是 shared/paths.js 的
- * buildR2Key = `modules/<slug>/<relativePath>`；不符合这个格局的对象一律取不到 slug。
+ * buildR2Key = `<MODULE_KEY_PREFIX><slug>/<relativePath>`；不符合格局的对象一律取不到 slug。
  */
 export function slugFromR2Key(key) {
-  const match = /^modules\/([^/]+)\//.exec(String(key ?? ''));
-  return match ? match[1] : null;
+  const k = String(key ?? '');
+  if (!k.startsWith(MODULE_KEY_PREFIX)) return null;
+  const rest = k.slice(MODULE_KEY_PREFIX.length);
+  const slash = rest.indexOf('/');
+  // 等价原正则 ^modules\/([^/]+)\/：slug 至少 1 字符，且后面必须还有一段路径
+  if (slash <= 0) return null;
+  return rest.slice(0, slash) || null;
 }
 
 /**

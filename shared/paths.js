@@ -12,9 +12,13 @@ export function stripTopFolder(relativePath, topFolderName) {
   return parts.join('/');
 }
 
+// 本项目在 R2 里的命名空间前缀：唯一出处（D 段 D-04）。
+// Worker / shared/admin.js / 离线冒烟都从这里取，不再各写一份 `modules/` 字面量。
+export const MODULE_KEY_PREFIX = 'modules/';
+
 // R2 没有「目录对象」，目录只是 key 前缀，天然保住目录格局。
 export function buildR2Key(slug, relativePath) {
-  return `modules/${slug}/${relativePath}`;
+  return `${MODULE_KEY_PREFIX}${slug}/${relativePath}`;
 }
 
 // 拼 URL 时按段编码；key 本身保持原始中文 / 特殊字符，不改名、不 ASCII 化。
