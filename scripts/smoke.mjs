@@ -1052,12 +1052,12 @@ check('R10 共用桶：容量闸门 = 5GB，wrangler.toml 与代码缺省一致�
   const doc = readFileSync(join(ROOT, 'docs/部署指引_纯点击.md'), 'utf8');
   assert.ok(!/8\s*GB|8GB/.test(doc), '部署指引不能残留 8GB');
   assert.ok(doc.includes('5 GB') && doc.includes('共用'));
-  // D-02：文档口径也要与 5GB 一致（README 第 6 行「8GB → 5GB」是历史变更说明，不算残留）
+  // D-02：README 已按「对外介绍文件」重写（v10），不再有「已知限制 / 边界与版权」两节标题。
+  // 改为全文口径扫描：现行文档不应残留 8GB，且应写明 5GB 闸门；历史变更叙述不进对外文件。
   const readme = readFileSync(join(ROOT, 'README.md'), 'utf8');
-  const limits = readme.slice(readme.indexOf('## 7. 已知限制'), readme.indexOf('## 8. 边界与版权'));
-  assert.ok(limits.length > 0, 'README 已知限制段应存在');
-  assert.ok(!/8\s*GB|8GB/i.test(limits), 'README 已知限制段不能残留 8GB');
-  assert.ok(/5\s?GB/i.test(limits), 'README 已知限制段应写现行 5GB 闸门');
+  assert.ok(readme.length > 0, 'README 应存在且非空');
+  assert.ok(!/8\s*GB|8GB/i.test(readme), 'README 不应残留 8GB 口径');
+  assert.ok(/5\s?GB/i.test(readme), 'README 应写现行 5GB 闸门');
   const migration = readFileSync(join(ROOT, 'migrations/0001_init.sql'), 'utf8');
   assert.ok(!/8\s*GB|8GB/i.test(migration), 'migration 注释不能残留 8GB');
   assert.ok(/5\s?GB/i.test(migration), 'migration 注释应与 5GB 闸门一致');
